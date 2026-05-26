@@ -69,3 +69,48 @@ export interface PluginConfig {
   maxResults: number;         // cap, default 10
   minScore: number;           // discard below this, default 6
 }
+
+/**
+ * Runtime state for the three-tier discovery coordinator.
+ * Persisted to a JSON file between cycles.
+ */
+export interface ScoutCycleState {
+  /** Monotonically increasing cycle counter */
+  cycleNumber: number;
+  /** ISO timestamp of last cycle */
+  lastCycleAt: string;
+  /** Keywords used in the last Tier 1 search */
+  lastKeywords: string[];
+  /** Whether Tier 1 was executed from cache */
+  tier1Cached: boolean;
+  /** Whether Tier 2 was executed this cycle */
+  tier2Executed: boolean;
+  /** Whether Tier 3 was executed this cycle */
+  tier3Executed: boolean;
+}
+
+/** Resolved profile with FID for Tier 2 profile monitoring */
+export interface MonitoredProfile {
+  /** Farcaster handle without @, e.g. "jordanpeterson" */
+  handle: string;
+  /** Resolved Farcaster ID (FID) from Neynar API */
+  fid: number;
+  /** Follower count at resolution time */
+  followerCount: number;
+}
+
+/** A single notification from Neynar's notifications endpoint */
+export interface NeynarNotification {
+  type: "reply" | "recast" | "like" | "follow" | "mention";
+  cast: NeynarCast;
+  parent_cast?: NeynarCast; // only for replies
+}
+
+/** Response envelope from GET /v2/farcaster/notifications */
+export interface NeynarNotificationsResponse {
+  notifications: {
+    type: string;
+    cast: any;
+    parent_cast?: any;
+  }[];
+}

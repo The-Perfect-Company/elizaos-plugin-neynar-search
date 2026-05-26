@@ -1,13 +1,24 @@
 // =============================================================================
-// scorer.ts — Three-axis engagement opportunity scorer
+// scorer.ts — Three-axis weighted engagement opportunity scorer
 //
-// Three equal-weight axes (each 0–10), averaged to produce a 1–10 final score:
-//   1. Author Reach       — log10(follower_count), +1 bonus for power badge
-//   2. Engagement Velocity — likes + recasts + replies, linear scale
-//   3. Topical Alignment  — keyword match count in cast text
+// Three weighted axes (each 0–10), averaged to produce a 1–10 final score:
+//   1. Author Reach       — log10(follower_count), +1 bonus for power badge  (weight: 3)
+//   2. Engagement Velocity — likes + recasts + replies, linear scale          (weight: 3)
+//   3. Topical Alignment  — keyword match count in cast text                  (weight: 4)
+//
+// Weights: Alignment (4) > Velocity (3) = Reach (3)
+// Rationale: topical relevance matters most — the Scout's primary mission is
+// finding casts that match Archon's strategic vectors. Engagement momentum and
+// author reach are equally weighted as secondary signals.
 // =============================================================================
 
 import type { NeynarCast, ScoredOpportunity } from "../types.js";
+
+// Weight constants — tunable
+const WEIGHT_REACH = 3;
+const WEIGHT_VELOCITY = 3;
+const WEIGHT_ALIGNMENT = 4;
+const WEIGHT_SUM = WEIGHT_REACH + WEIGHT_VELOCITY + WEIGHT_ALIGNMENT; // 10
 
 // ---------------------------------------------------------------------------
 // Axis 1: Author Reach
@@ -135,8 +146,8 @@ export function scoreCast(cast: NeynarCast, keywords: string[]): ScoredOpportuni
   );
   const { score: alignment, matched } = scoreTopicalAlignment(cast.text ?? "", keywords);
 
-  // Equal-weight average
-  const raw = (reach + velocity + alignment) / 3;
+  // Weighted average: Alignment (4) > Velocity (3) = Reach (3)
+  const raw = (reach * WEIGHT_REACH + velocity * WEIGHT_VELOCITY + alignment * WEIGHT_ALIGNMENT) / WEIGHT_SUM;
   // Round to 1 decimal place, clamp to [1, 10]
   const score = Math.min(10, Math.max(1, Math.round(raw * 10) / 10));
 

@@ -10,7 +10,7 @@ No signer. No posting. No Farcaster client dependency. Pure signal detection.
 
 Registers a `SEARCH_FARCASTER` action that:
 
-1. **Dynamically extracts keywords** from the agent's RAG knowledge (prioritizing `target_list.md` content from the `knowledge` table) or parses them from the triggering message.
+1. **Dynamically extracts keywords** from the agent's RAG knowledge (prioritizing `farcaster_target_list.md` and `twitter_target_list.md` content from the `knowledge` table) or parses them from the triggering message.
 2. **Searches Farcaster casts** matching the keyword corpus via `GET /v2/farcaster/cast/search`.
 3. **Scores each cast** on three axes (author reach · engagement velocity · topical alignment) → **1–10**
 4. **Filters to scores ≥ 6/10**, caps queue at **5 opportunities** (configurable via `MAX_RESULTS`)
@@ -113,9 +113,15 @@ Fallback queue delivered to Archon. 5 item(s) (all below 6/10 threshold). Cycle 
 
 ## Scoring Algorithm
 
-Each cast is scored on three equal-weight axes (0–10 each), averaged to produce a final score:
+Each cast is scored on three **weighted** axes (0–10 each), combined to produce a final score:
 
-### Axis 1 — Author Reach
+| Axis | Weight | Rationale |
+|------|:------:|-----------|
+| **Topical Alignment** | **×4** | Most important — the Scout's primary mission is finding casts matching Archon's strategic vectors |
+| **Engagement Velocity** | **×3** | Measures active conversation momentum, secondary to relevance |
+| **Author Reach** | **×3** | Lowest weight to avoid celebrity bias; niche experts on-topic are worth more than big accounts rambling |
+
+### Axis 1 — Author Reach  (weight: 3)
 `(log10(follower_count) / 6) * 10` normalized to 0–10 (1M followers = 10). +1 bonus for Neynar power badge, capped at 10.
 
 | Followers | Score |
@@ -126,7 +132,7 @@ Each cast is scored on three equal-weight axes (0–10 each), averaged to produc
 | 100 000   | 8.3   |
 | 1 000 000 | 10.0  |
 
-### Axis 2 — Engagement Velocity
+### Axis 2 — Engagement Velocity  (weight: 3)
 `(likes + recasts + replies)` linear scale, saturates at 500 total → 10.
 
 | Total engagement | Score |
@@ -136,7 +142,7 @@ Each cast is scored on three equal-weight axes (0–10 each), averaged to produc
 | 250             | 5.0   |
 | 500+            | 10.0  |
 
-### Axis 3 — Topical Alignment
+### Axis 3 — Topical Alignment  (weight: 4)
 Count of distinct keywords from the active corpus found in the cast text:
 
 | Keyword matches | Score |
@@ -146,7 +152,7 @@ Count of distinct keywords from the active corpus found in the cast text:
 | 2              | 6.7   |
 | 3+             | 10.0  |
 
-**Final score** = `mean(reach, velocity, alignment)` rounded to 1 decimal, clamped [1, 10].
+**Final score** = `(reach × 3 + velocity × 3 + alignment × 4) / 10` rounded to 1 decimal, clamped [1, 10].
 
 ### Filtering
 
@@ -158,9 +164,9 @@ Count of distinct keywords from the active corpus found in the cast text:
 
 ## Archon delivery
 
-By default the plugin POSTs the queue to:
+By default the plugin POSTs the queue to the lightweight `/ingest` endpoint (skips LLM inference — ~50ms response):
 ```
-http://archon_euro_container:3000/{ARCHON_AGENT_ID}/message
+http://archon_euro_container:3000/{ARCHON_AGENT_ID}/ingest
 ```
 
 This is hardcoded for the `agents-ecosystem` multi-agent setup. To adapt for a different target, edit `ARCHON_BASE_URL` and `ARCHON_AGENT_ID` in [`src/actions/searchFarcaster.ts`](src/actions/searchFarcaster.ts).
@@ -169,10 +175,11 @@ This is hardcoded for the `agents-ecosystem` multi-agent setup. To adapt for a d
 
 ## Neynar API endpoints used
 
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | `/v2/farcaster/cast/search?q=QUERY&limit=25` | Keyword cast search |
-| GET | `/v2/farcaster/user/casts?fid=FID&limit=10` | Target profile monitoring |
+| Method | Endpoint | Purpose | Tier |
+|--------|----------|---------|:----:|
+| GET | `/v2/farcaster/cast/search?q=QUERY&limit=25` | Keyword cast search | T1 |
+| GET | `/v2/farcaster/user/casts?fid=FID&limit=10` | Target profile monitoring | T2 |
+| GET | `/v2/farcaster/notifications?fid={FID}&limit=25` | Inbound engagement detection | T3 |
 
 **Auth**: `api_key` header. No signer UUID. Fully read-only.
 

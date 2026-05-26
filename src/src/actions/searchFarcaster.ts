@@ -6,23 +6,29 @@
 //   2. Parse keywords from message or extract from RAG knowledge (target_list.md)
 //   3. Fetch casts from Neynar API (parallel batched keyword searches)
 //   4. Score, filter (< 6 discarded), cap at 10, rank descending
-//   5. Format ranked queue text
+//   5. Format ranked queue text with [PRIORITY] tags for high-value opportunities
 //   6. POST queue to Archon's DirectClient endpoint
 //   7. Return queue text via callback
 // =============================================================================
 
 import type { Action, IAgentRuntime, Memory, State, HandlerCallback } from "@elizaos/core";
 import { elizaLogger } from "@elizaos/core";
-import { searchAllKeywords } from "../lib/neynarClient.js";
+import * as fs from "fs";
+import * as path from "path";
+import { searchAllKeywords, getUserCasts, lookupUserByHandle, getNotifications } from "../lib/neynarClient.js";
 import { scoreAndRankWithFallback } from "../lib/scorer.js";
-import type { ScoredOpportunity } from "../types.js";
+import { loadCachedResults, saveCachedResults } from "../lib/cache.js";
+import type { ScoredOpportunity, ScoutCycleState, NeynarCast, MonitoredProfile } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const ARCHON_AGENT_ID = "187939ae-c36e-08ef-836f-131b1b658c9a";
-const ARCHON_BASE_URL = "http://archon_euro_container:3000";
+const ARCHON_AGENT_ID = process.env.ARCHON_AGENT_ID ?? "187939ae-c36e-08ef-836f-131b1b658c9a";
+const ARCHON_BASE_URL = process.env.ARCHON_BASE_URL ?? "http://archon_euro_container:3000";
+
+/** Archon's Farcaster FID for inbound engagement detection (Tier 3) */
+const ARCHON_FARCASTER_FID = Number(process.env.ARCHON_FARCASTER_FID) || 3315139;
 
 /** Default keyword corpus derived from target_list.md and CONSTITUTION.md */
 const DEFAULT_KEYWORDS = [
@@ -59,73 +65,70 @@ const MIN_SCORE = 6;
  */
 async function extractKeywordsFromKnowledge(runtime: IAgentRuntime): Promise<string[]> {
   try {
-    // Query RAG for recent memories containing knowledge content
-    const knowledgeResults = await runtime.messageManager.getMemories({
-      roomId: runtime.agentId,
-      count: 200,
-      unique: false
+    // Try direct knowledge table FIRST (most reliable path)
+    let targetListEntries: any[] = [];
+
+    const dbKnowledge = await (runtime.databaseAdapter as any).getKnowledge({
+      agentId: runtime.agentId,
     });
-    
-    // Find target_list.md entries in knowledge
-    let targetListEntries = knowledgeResults.filter(m =>
-      m.content.source?.includes("target_list.md") ||
-      m.content.text?.includes("Target List") ||
-      m.content.text?.includes("Anillo")
-    );
-    
+
+    if (dbKnowledge && dbKnowledge.length > 0) {
+      targetListEntries = dbKnowledge
+        .filter((k: any) =>
+          k.content?.metadata?.source?.includes("target_list.md") ||
+          k.content?.text?.includes("Target List")
+        )
+        .map((k: any) => ({
+          content: {
+            text: k.content?.text || "",
+            source: k.content?.metadata?.source
+          }
+        }));
+    }
+
+    // Fallback to message manager memories if knowledge table had nothing
     if (targetListEntries.length === 0) {
       elizaLogger.info(
-        "[neynar-search] target_list.md not found in memories. Querying knowledge table directly..."
+        "[neynar-search] target list files not found in knowledge table. Trying message memories..."
       );
-      
-      // Fallback to direct database query if memories are empty or missing the source
-      const dbKnowledge = await (runtime.databaseAdapter as any).getKnowledge({
-        agentId: runtime.agentId,
+
+      const knowledgeResults = await runtime.messageManager.getMemories({
+        roomId: runtime.agentId,
+        count: 200,
+        unique: false
       });
 
-      if (dbKnowledge && dbKnowledge.length > 0) {
-        targetListEntries = dbKnowledge
-          .filter((k: any) =>
-            k.content.metadata?.source?.includes("target_list.md") ||
-            k.content.text?.includes("Target List") ||
-            k.content.text?.includes("Anillo")
-          )
-          .map((k: any) => ({
-            content: {
-              text: k.content.text,
-              source: k.content.metadata?.source
-            }
-          }));
-      }
+      targetListEntries = knowledgeResults.filter(m =>
+        m.content?.source?.includes("target_list.md") ||
+        m.content?.text?.includes("Target List")
+      );
     }
     
     if (targetListEntries.length === 0) {
       elizaLogger.info(
-        "[neynar-search] target_list.md not found in RAG knowledge. Using DEFAULT_KEYWORDS."
+        "[neynar-search] target list files not found in RAG knowledge. Using DEFAULT_KEYWORDS."
       );
       return DEFAULT_KEYWORDS;
     }
     
-    elizaLogger.log(
-      `[neynar-search] Found ${targetListEntries.length} target_list.md entries in RAG`
+    elizaLogger.info(
+      `[neynar-search] Found ${targetListEntries.length} target list entries in RAG — using vector terms + hashtags only`
     );
     
     // Extract keywords from the content
     const content = targetListEntries.map(e => e.content.text).join("\n");
     const keywords = new Set<string>();
     
-    // Parse for key terms: Look for quoted terms, bold terms, and topics
-    // Pattern 1: **Bold terms** from markdown
-    const boldMatches = content.match(/\*\*([^*]+)\*\*/g) || [];
-    boldMatches.forEach(m => {
-      const keyword = m.replace(/\*\*/g, "").trim();
-      if (keyword.length > 3 && keyword.length < 40 && !keyword.includes("\n")) {
-        keywords.add(keyword);
-      }
-    });
+    // Parse for key terms: ONLY vector/alignment terms and hashtags
+    // Person names (bold terms) are intentionally skipped — they produce
+    // generic search results at ~149 credits each with poor signal-to-noise ratio.
+    // Profile monitoring is handled by Tier 2 (getUserCasts for specific FIDs).
     
-    // Pattern 2: Terms after "Vector de Ataque" or similar headers
-    const vectorMatches = content.match(/(?:Vector de Ataque|Industrial|Energy|Strategic|Rationalism)[:\s]+([^\n|]+)/gi) || [];
+    // Pattern 1: Skipped — bold terms are person names (e.g., **Elon Musk (@elonmusk):**)
+    // Use Tier 2 profile monitoring instead for person-specific tracking.
+    
+    // Pattern 2: Vector column headers — only match at start of line or after pipe (table cell boundaries)
+    const vectorMatches = content.match(/(?:^|\|)\s*(?:Vector de Ataque|Industrial|Energy|Strategic|Rationalism)[:\s]+([^\n|]{2,})/gmi) || [];
     vectorMatches.forEach(m => {
       const terms = m.split(/[&,]/).map(t => t.trim());
       terms.forEach(term => {
@@ -148,12 +151,19 @@ async function extractKeywordsFromKnowledge(runtime: IAgentRuntime): Promise<str
     
     if (extractedKeywords.length > 0) {
       // Merge with defaults to ensure coverage, prioritize RAG keywords
-      const mergedKeywords = [...extractedKeywords, ...DEFAULT_KEYWORDS]
-        .filter((v, i, a) => a.indexOf(v) === i) // deduplicate
-        .slice(0, 30); // cap at 30
+      // Use Set-based dedup with case-insensitive comparison to catch
+      // duplicates like "WesternValues", "westernvalues", and "Western values"
+      const allKw = [...extractedKeywords, ...DEFAULT_KEYWORDS];
+      const seen = new Set<string>();
+      const mergedKeywords = allKw.filter(v => {
+        const key = v.toLowerCase().trim();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }).slice(0, 30); // cap at 30
       
       elizaLogger.success(
-        `[neynar-search] Extracted ${extractedKeywords.length} keywords from RAG, ` +
+        `[neynar-search] Extracted ${extractedKeywords.length} vector/hashtag keywords from RAG, ` +
         `merged with ${DEFAULT_KEYWORDS.length} defaults (total: ${mergedKeywords.length})`
       );
       
@@ -164,7 +174,7 @@ async function extractKeywordsFromKnowledge(runtime: IAgentRuntime): Promise<str
     return DEFAULT_KEYWORDS;
     
   } catch (err) {
-    elizaLogger.warn("[neynar-search] Error reading RAG knowledge:", err);
+    elizaLogger.warn("[neynar-search] Error reading RAG knowledge: " + String(err));
     return DEFAULT_KEYWORDS;
   }
 }
@@ -192,6 +202,7 @@ async function extractKeywords(text: string, runtime: IAgentRuntime): Promise<st
 
 /**
  * Format the scored opportunity queue as structured text for Archon.
+ * High-scoring opportunities (>= 8) get a [PRIORITY] tag for easy identification.
  */
 function formatQueue(
   opportunities: ScoredOpportunity[],
@@ -257,7 +268,10 @@ function formatQueue(
       ? op.suggestedAngle.slice(0, 147) + "..."
       : op.suggestedAngle;
 
-    lines.push(`${i + 1}. SCORE ${op.score}/10 — @${op.author.username}`);
+    // Add [PRIORITY] tag for high-value opportunities (score >= 8)
+    const priorityTag = op.score >= 8 ? " [PRIORITY]" : "";
+
+    lines.push(`${i + 1}. SCORE ${op.score}/10${priorityTag} — @${op.author.username}`);
     lines.push(`   URL: ${op.castUrl}`);
     lines.push(
       `   Reach: ${op.author.follower_count.toLocaleString()} followers${op.author.power_badge ? " [⚡ power badge]" : ""}`
@@ -280,14 +294,19 @@ function formatQueue(
 /**
  * Deliver the ranked queue to Archon's DirectClient endpoint.
  * Uses retry logic with timeout. Failure is logged but does not abort the action.
+ * Includes structured logging for delivery tracking.
  */
 async function deliverToArchon(queueText: string): Promise<void> {
-  const url = `${ARCHON_BASE_URL}/${ARCHON_AGENT_ID}/message`;
+  const url = `${ARCHON_BASE_URL}/${ARCHON_AGENT_ID}/ingest`;
 
-  elizaLogger.log(
-    `[neynar-search] Attempting DirectClient delivery. Length: ${queueText.length} chars. ` +
+  elizaLogger.info(
+    `[NeynarDebug] Attempting DirectClient delivery. Length: ${queueText.length} chars. ` +
     `Approximate tokens: ${Math.ceil(queueText.length / 4)}`
   );
+
+  // Count priority items for structured logging
+  const priorityCount = (queueText.match(/\[PRIORITY\]/g) || []).length;
+  const opportunityCount = (queueText.match(/SCORE \d+\/10/g) || []).length;
 
   const body = JSON.stringify({
     text: `[SCOUT DELIVERY]\n\n${queueText}`,
@@ -295,9 +314,11 @@ async function deliverToArchon(queueText: string): Promise<void> {
     userName: "The Scout",
   });
 
+  const deliveryStart = Date.now();
+
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+    const timeout = setTimeout(() => controller.abort(), 5000); // 5s timeout — fire-and-forget
 
     const res = await fetch(url, {
       method: "POST",
@@ -307,21 +328,329 @@ async function deliverToArchon(queueText: string): Promise<void> {
     });
 
     clearTimeout(timeout);
+    const deliveryDuration = Date.now() - deliveryStart;
 
-    if (res.ok) {
+    if (res.status === 202 || res.status === 200) {
       elizaLogger.success(
-        `[neynar-search] DirectClient delivery succeeded (${res.status})`
+        `[NeynarDebug] DirectClient delivery accepted (${res.status}) in ${deliveryDuration}ms. ` +
+        `Opportunities: ${opportunityCount}, Priority: ${priorityCount}`
       );
     } else {
       elizaLogger.info(
-        `[neynar-search] DirectClient returned ${res.status}. Using shared DB fallback (normal behavior).`
+        `[NeynarDebug] DirectClient returned ${res.status} in ${deliveryDuration}ms. ` +
+        `Using shared DB fallback (normal behavior).`
       );
     }
   } catch (err: any) {
+    const deliveryDuration = Date.now() - deliveryStart;
     elizaLogger.info(
-      `[neynar-search] DirectClient unavailable (${err.message}). Using shared DB fallback (normal behavior).`
+      `[NeynarDebug] DirectClient unavailable (${err.message}) after ${deliveryDuration}ms. ` +
+      `Using shared DB fallback (normal behavior).`
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Three-Tier Coordinator Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Get and increment the cycle counter.
+ * Persisted in a JSON file so it survives Scout restarts.
+ * Resets to 1 if the file is missing or corrupted.
+ */
+function getNextCycleNumber(): number {
+  const statePath = path.resolve(process.cwd(), ".neynar-state", "cycle-state.json");
+  try {
+    const dir = path.dirname(statePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    let state: ScoutCycleState;
+    if (fs.existsSync(statePath)) {
+      const raw = fs.readFileSync(statePath, "utf-8");
+      state = JSON.parse(raw);
+      state.cycleNumber = (state.cycleNumber || 0) + 1;
+    } else {
+      state = {
+        cycleNumber: 1,
+        lastCycleAt: new Date().toISOString(),
+        lastKeywords: [],
+        tier1Cached: false,
+        tier2Executed: false,
+        tier3Executed: false,
+      };
+    }
+
+    state.lastCycleAt = new Date().toISOString();
+    fs.writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
+    return state.cycleNumber;
+  } catch (err) {
+    elizaLogger.warn("[neynar-search] Cycle counter error: " + String(err));
+    return 1; // default to cycle 1 on error
+  }
+}
+
+/**
+ * Tier 1: Topic keyword discovery with result caching.
+ * Uses cache if fresh (<6.5h old), otherwise does fresh API calls.
+ */
+async function runTier1(
+  apiKey: string,
+  keywords: string[],
+  cycleNumber: number
+): Promise<NeynarCast[]> {
+  // Try cache first (only useful after cycle 1, since cache was just created)
+  if (cycleNumber > 1) {
+    const cached = loadCachedResults();
+    if (cached) {
+      elizaLogger.log(`[neynar-search] Tier 1: Using CACHED results (${cached.results.length} casts)`);
+      return cached.results;
+    }
+  }
+
+  // Cache miss or first cycle — do fresh API calls
+  elizaLogger.log(`[neynar-search] Tier 1: Fresh API search — ${keywords.length} keywords`);
+
+  let casts: NeynarCast[];
+  try {
+    casts = await searchAllKeywords(apiKey, keywords, 10, 5);
+  } catch (err) {
+    elizaLogger.error("[neynar-search] Tier 1 searchAllKeywords threw: " + String(err));
+    casts = [];
+  }
+
+  // Save to cache for next cycles
+  if (casts.length > 0) {
+    saveCachedResults(casts, keywords);
+  }
+
+  return casts;
+}
+
+/**
+ * Tier 2: Profile monitoring — fetch recent casts from monitored profiles.
+ * Resolves @handles from target_list.md into FIDs at runtime.
+ * Runs every 2 cycles. Uses getUserCasts (~38 credits per call).
+ */
+async function runTier2(
+  apiKey: string,
+  profiles: MonitoredProfile[]
+): Promise<NeynarCast[]> {
+  if (profiles.length === 0) {
+    elizaLogger.info("[neynar-search] Tier 2: No monitored profiles to check — skipping");
+    return [];
+  }
+
+  elizaLogger.info(
+    `[neynar-search] Tier 2: Profile monitoring — ${profiles.length} profiles resolved`
+  );
+
+  const allCasts: NeynarCast[] = [];
+
+  for (const profile of profiles) {
+    try {
+      const casts = await getUserCasts(apiKey, profile.fid, 5);
+      elizaLogger.info(
+        `[neynar-search] Tier 2: @${profile.handle} (fid=${profile.fid}, ${profile.followerCount.toLocaleString()} followers) — ${casts.length} recent casts`
+      );
+      allCasts.push(...casts);
+    } catch (err) {
+      elizaLogger.warn(`[neynar-search] Tier 2: Error fetching @${profile.handle}: ${String(err)}`);
+    }
+
+    // Small delay between profile fetches
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  elizaLogger.info(
+    `[neynar-search] Tier 2 complete: ${allCasts.length} total casts from ${profiles.length} profiles`
+  );
+  return allCasts;
+}
+
+/**
+ * Tier 3: Inbound engagement detection — check for replies, mentions, recasts
+ * to Archon's Farcaster account using the Notifications endpoint.
+ *
+ * GET /v2/farcaster/notifications?fid={ARCHON_FARCASTER_FID}&limit=25
+ * ~148 credits per call, 1 call per cycle.
+ */
+async function runTier3(apiKey: string): Promise<NeynarCast[]> {
+  const fid = ARCHON_FARCASTER_FID;
+  
+  elizaLogger.info(
+    `[NeynarDebug] Tier 3: Checking inbound engagement for FID ${fid}...`
+  );
+
+  try {
+    const notifications = await getNotifications(apiKey, fid, 25);
+
+    if (notifications.length === 0) {
+      elizaLogger.info("[NeynarDebug] Tier 3: No inbound engagement detected");
+      return [];
+    }
+
+    // Count by type for logging
+    const replies = notifications.filter(n => n.type === "reply").length;
+    const mentions = notifications.filter(n => n.type === "mention").length;
+    const recasts = notifications.filter(n => n.type === "recast").length;
+
+    elizaLogger.info(
+      `[NeynarDebug] Tier 3: ${replies} replies, ${mentions} mentions, ${recasts} recasts`
+    );
+
+    // Extract the engagement casts as NeynarCast[]
+    const engagementCasts = notifications.map(n => {
+      // Tag the cast text to identify it as engagement
+      const taggedCast: NeynarCast = {
+        ...n.cast,
+        text: `[ENGAGEMENT:${n.type}] ${n.cast.text}`,
+      };
+      return taggedCast;
+    });
+
+    return engagementCasts;
+  } catch (err) {
+    elizaLogger.warn(
+      `[NeynarDebug] Tier 3 ERROR: ${err}`
+    );
+    return [];
+  }
+}
+
+/**
+ * Resolve monitored Farcaster handles from RAG knowledge (target_list.md)
+ * into MonitoredProfile[] with FIDs via Neynar API.
+ * 
+ * Falls back to hardcoded known handles if RAG is unavailable.
+ * Cache is in-memory for current Scout process lifespan.
+ */
+let _resolvedProfilesCache: MonitoredProfile[] | null = null;
+
+async function resolveMonitoredProfiles(
+  apiKey: string,
+  runtime: IAgentRuntime
+): Promise<MonitoredProfile[]> {
+  // Return cached profiles if already resolved this process lifetime
+  if (_resolvedProfilesCache && _resolvedProfilesCache.length > 0) {
+    elizaLogger.info(
+      `[neynar-search] Using ${_resolvedProfilesCache.length} cached monitored profiles`
+    );
+    return _resolvedProfilesCache;
+  }
+
+  // Extract @handles from target_list.md via RAG knowledge
+  const handles = new Set<string>();
+  try {
+    const dbKnowledge = await (runtime.databaseAdapter as any).getKnowledge({
+      agentId: runtime.agentId,
+    });
+
+    if (dbKnowledge && dbKnowledge.length > 0) {
+      const targetListEntries = dbKnowledge.filter((k: any) =>
+        k.content?.metadata?.source?.includes("target_list.md") ||
+        k.content?.text?.includes("Target List") ||
+        k.content?.text?.includes("Anillo")
+      );
+
+      for (const entry of targetListEntries) {
+        const text: string = entry.content?.text || "";
+        // Match @handles in the format "Name (@handle)" or just "@handle"
+        const atMatches = text.match(/@(\w+)/g) || [];
+        for (const m of atMatches) {
+          handles.add(m.replace("@", "").toLowerCase().trim());
+        }
+      }
+    }
+  } catch (err) {
+    elizaLogger.warn("[neynar-search] resolveMonitoredProfiles: RAG error — " + String(err));
+  }
+
+  // Fallback handles if RAG had nothing
+  if (handles.size === 0) {
+    elizaLogger.info("[neynar-search] resolveMonitoredProfiles: No @handles found in RAG, using fallback handles");
+    for (const h of ["jordanpeterson", "balaji", "vitalikbuterin", "naval"]) {
+      handles.add(h);
+    }
+  }
+
+  elizaLogger.info(
+    `[neynar-search] resolveMonitoredProfiles: Resolving ${handles.size} handles via Neynar API`
+  );
+
+  // Resolve each handle to an FID via Neynar API
+  // If 3 consecutive lookups fail, assume plan limitation (402) and skip remaining
+  const profiles: MonitoredProfile[] = [];
+  let consecutiveFailures = 0;
+  const MAX_FAILURES_BEFORE_SKIP = 3;
+  let profileAttempts = 0;
+
+  for (const handle of handles) {
+    if (consecutiveFailures >= MAX_FAILURES_BEFORE_SKIP) {
+      elizaLogger.info(
+        `[NeynarDebug] resolveMonitoredProfiles: ${consecutiveFailures} consecutive failures — ` +
+        `skipping remaining ${handles.size - profileAttempts} handles (plan limitation)`
+      );
+      break;
+    }
+
+    profileAttempts++;
+
+    try {
+      const result = await lookupUserByHandle(apiKey, handle);
+      if (result) {
+        profiles.push({
+          handle: result.username,
+          fid: result.fid,
+          followerCount: result.followerCount,
+        });
+        consecutiveFailures = 0;
+      } else {
+        consecutiveFailures++;
+        elizaLogger.warn(
+          `[neynar-search] resolveMonitoredProfiles: Could not resolve @${handle} — skipping`
+        );
+      }
+    } catch (err) {
+      consecutiveFailures++;
+      elizaLogger.warn(
+        `[neynar-search] resolveMonitoredProfiles: Error resolving @${handle}: ${String(err)}`
+      );
+    }
+
+    // Small delay between API calls to be polite
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  // Cache for this process lifetime
+  _resolvedProfilesCache = profiles;
+
+  elizaLogger.info(
+    `[neynar-search] resolveMonitoredProfiles: ${profiles.length}/${handles.size} handles resolved successfully`
+  );
+
+  return profiles;
+}
+
+/**
+ * Merge and deduplicate casts from multiple tiers by hash.
+ */
+function mergeAndDedupe(tierResults: NeynarCast[][]): NeynarCast[] {
+  const seen = new Set<string>();
+  const merged: NeynarCast[] = [];
+
+  for (const tier of tierResults) {
+    for (const cast of tier) {
+      if (!seen.has(cast.hash)) {
+        seen.add(cast.hash);
+        merged.push(cast);
+      }
+    }
+  }
+
+  return merged;
 }
 
 // ---------------------------------------------------------------------------
@@ -366,53 +695,64 @@ export const searchFarcasterAction: Action = {
   ): Promise<boolean> => {
     const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
-    elizaLogger.log(`[neynar-search] Starting discovery cycle at ${timestamp}`);
+    elizaLogger.log(`[neynar-search] Starting THREE-TIER discovery cycle at ${timestamp}`);
 
     // 1. API key
     const apiKey = runtime.getSetting("FARCASTER_NEYNAR_API_KEY");
     if (!apiKey) {
       const errText = "[SCOUT] ERROR: FARCASTER_NEYNAR_API_KEY not configured. Cycle aborted.";
-      elizaLogger.error("[neynar-search]", errText);
+      elizaLogger.error("[neynar-search] " + errText);
       callback({ text: errText });
       return false;
     }
 
-    // 2. Keywords (now async, reads from RAG if available)
+    // 2. Cycle counter (increment each run)
+    const cycleNumber = getNextCycleNumber();
+    elizaLogger.log(`[neynar-search] Cycle #${cycleNumber} — determining which tiers to run`);
+
+    // 3. Extract keywords
     const messageText = (message?.content?.text as string) ?? "";
     const keywords = await extractKeywords(messageText, runtime);
-    elizaLogger.log(`[neynar-search] Searching ${keywords.length} keywords: ${keywords.slice(0, 5).join(", ")}${keywords.length > 5 ? "..." : ""}`);
 
-    // 3. Fetch casts (batched parallel, max 5 concurrent)
-    let casts;
-    try {
-      casts = await searchAllKeywords(apiKey, keywords, 25, 5);
-    } catch (err) {
-      elizaLogger.error("[neynar-search] searchAllKeywords threw:", err);
-      casts = [];
+    // 4. Tier 1: Topic Discovery — every cycle, cached
+    const tier1Casts = await runTier1(apiKey, keywords, cycleNumber);
+
+    // 5. Tier 2: Profile Monitoring — every 2 cycles
+    let tier2Casts: NeynarCast[] = [];
+    if (cycleNumber % 2 === 0) {
+      const monitoredProfiles = await resolveMonitoredProfiles(apiKey, runtime);
+      tier2Casts = await runTier2(apiKey, monitoredProfiles);
+    } else {
+      elizaLogger.log("[neynar-search] Tier 2 (profile monitoring) skipped — odd cycle");
     }
 
+    // 6. Tier 3: Inbound Engagement — every cycle
+    const tier3Casts = await runTier3(apiKey);
+    // Tier 3 uses notifications endpoint (~148 credits/call, 1 call/cycle)
+
+    // 7. Merge and deduplicate all tiers
+    const allCasts = mergeAndDedupe([tier1Casts, tier2Casts, tier3Casts]);
     elizaLogger.log(
-      `[neynar-search] Fetched ${casts.length} unique casts across ${keywords.length} keywords`
+      `[neynar-search] Merged tiers: T1=${tier1Casts.length}, T2=${tier2Casts.length}, ` +
+      `T3=${tier3Casts.length}, unique=${allCasts.length}`
     );
 
-    // 4. Score, filter, rank (with fallback to top 5 if none above threshold)
+    // 8. Score, filter, rank (existing logic from scorer.ts)
     const { opportunities, isFallback } = scoreAndRankWithFallback(
-      casts, keywords, MIN_SCORE, MAX_RESULTS, 5
+      allCasts, keywords, MIN_SCORE, MAX_RESULTS, 5
     );
 
     elizaLogger.log(
-      `[neynar-search] ${opportunities.length} opportunities ${isFallback ? "(fallback — below threshold)" : "above threshold (min " + MIN_SCORE + "/10)"}`
+      `[neynar-search] ${opportunities.length} opportunities ${isFallback ? "(fallback)" : "above threshold"}`
     );
 
-    // 5. Format queue
+    // 9. Format queue
     const queueText = formatQueue(opportunities, timestamp, isFallback);
 
-    // 6. Deliver to Archon (non-blocking)
-    deliverToArchon(queueText).catch(() => {
-      /* logged inside */
-    });
+    // 10. Deliver to Archon (non-blocking)
+    deliverToArchon(queueText).catch(() => { /* logged inside */ });
 
-    // 7. Return to Scout via callback
+    // 11. Return to Scout via callback
     callback({ text: queueText });
 
     return true;
@@ -429,7 +769,7 @@ export const searchFarcasterAction: Action = {
       {
         user: "The Scout",
         content: {
-          text: "[SCOUT CYCLE 2024-01-15T10:00:00Z] — 3 opportunity(ies) queued\n\n1. SCORE 9/10 — @ischinger\n   URL: https://warpcast.com/ischinger/0x1a2b3c4d\n   Reach: 84,700 followers [⚡ power badge]\n   Engagement: 847L / 32RC / 62R (941 total)\n   Keywords: EU energy, European sovereignty\n   Angle: Lead with a data-rich counterpoint on \"EU energy\" — @ischinger's 941 total interactions signal peak thread momentum.\n\nQueue delivered to Archon. 3 item(s). Cycle complete.",
+          text: "[SCOUT CYCLE 2024-01-15T10:00:00Z] — 3 opportunity(ies) queued\n\n1. SCORE 9/10 [PRIORITY] — @ischinger\n   URL: https://warpcast.com/ischinger/0x1a2b3c4d\n   Reach: 84,700 followers [⚡ power badge]\n   Engagement: 847L / 32RC / 62R (941 total)\n   Keywords: EU energy, European sovereignty\n   Angle: Lead with a data-rich counterpoint on \"EU energy\" — @ischinger's 941 total interactions signal peak thread momentum.\n\nQueue delivered to Archon. 3 item(s). Cycle complete.",
           action: "SEARCH_FARCASTER",
         },
       },
