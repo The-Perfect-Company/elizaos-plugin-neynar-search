@@ -573,13 +573,14 @@ export const likeFarcasterAction: Action = {
 
       const duration = Date.now() - startTime;
 
-      // --- Success log ---
+      // --- Success log: prominent summary (easy to grep in docker logs) ---
       elizaLogger.success(
-        `[LIKE] Cycle COMPLETE — ` +
+        `[LIKE] ===== ${totalLiked} posts liked ===== ` +
         `batch #${likeState.batchNumber}: ` +
-        `liked=${totalLiked} (scout=${scoutLiked}+extra=${extraLiked}), ` +
+        `scout=${scoutLiked}+extra=${extraLiked}, ` +
         `daily=${likeState.dailyCount}/${config.maxDailyLikes}, ` +
         `remaining=${result.dailyBudgetRemaining}, ` +
+        `failed=${totalFailed}, ` +
         `duration=${duration}ms`
       );
 

@@ -13,6 +13,28 @@
 // =============================================================================
 
 import type { NeynarCast, ScoredOpportunity } from "../types.js";
+// ---------------------------------------------------------------------------
+// Cycle-Scoped Scoring Cache (WP8.4 — in-memory, per-cycle)
+// Prevents redundant scoring when the same cast appears in multiple tiers.
+// Cache is cleared at the start of each search cycle.
+// ---------------------------------------------------------------------------
+
+/**
+ * In-memory cache for scored results within a single search cycle.
+ * Map<cast_hash, ScoredOpportunity>
+ * Cleared at the start of each scoring batch to prevent cross-cycle persistence.
+ */
+const _cycleScoreCache = new Map<string, ScoredOpportunity>();
+
+/**
+ * Clear the cycle-scoped scoring cache.
+ * Called at the beginning of each scoreAndRank or scoreAndRankWithFallback call.
+ */
+function clearCycleScoreCache(): void {
+  _cycleScoreCache.clear();
+}
+
+
 
 // Weight constants — tunable
 const WEIGHT_REACH = 3;
@@ -135,6 +157,12 @@ function buildCastUrl(cast: NeynarCast): string {
 // ---------------------------------------------------------------------------
 
 export function scoreCast(cast: NeynarCast, keywords: string[]): ScoredOpportunity {
+  // Check cycle-scoped cache first
+  const cacheKey = cast.hash;
+  if (cacheKey && _cycleScoreCache.has(cacheKey)) {
+    return _cycleScoreCache.get(cacheKey)!;
+  }
+
   const reach = scoreAuthorReach(
     cast.author?.follower_count ?? 0,
     cast.author?.power_badge ?? false
@@ -154,13 +182,20 @@ export function scoreCast(cast: NeynarCast, keywords: string[]): ScoredOpportuni
   const suggestedAngle = buildSuggestedAngle(cast, matched, score);
   const castUrl = buildCastUrl(cast);
 
-  return {
+  const result: ScoredOpportunity = {
     ...cast,
     score,
     suggestedAngle,
     castUrl,
     matchedKeywords: matched,
   };
+
+  // Store in cycle-scoped cache
+  if (cacheKey) {
+    _cycleScoreCache.set(cacheKey, result);
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +208,8 @@ export function scoreAndRank(
   minScore = 6,
   maxResults = 10
 ): ScoredOpportunity[] {
+  // Clear cycle-scoped cache at the start of each scoring batch
+  clearCycleScoreCache();
   return casts
     .map((c) => scoreCast(c, keywords))
     .filter((o) => o.score >= minScore)
@@ -198,6 +235,8 @@ export function scoreAndRankWithFallback(
   maxResults = 10,
   fallbackCount = 5
 ): { opportunities: ScoredOpportunity[]; isFallback: boolean } {
+  // Clear cycle-scoped cache at the start of each scoring batch
+  clearCycleScoreCache();
   const scored = casts.map((c) => scoreCast(c, keywords));
 
   const aboveThreshold = scored

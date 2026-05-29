@@ -4,6 +4,7 @@
 // Flow:
 //   1. Read FARCASTER_NEYNAR_API_KEY from runtime settings
 //   2. Parse keywords from message or extract from RAG knowledge (target_list.md)
+//      — results cached for 6h (KEYWORD_CACHE_TTL_MS)
 //   3. Fetch casts from Neynar API (parallel batched keyword searches)
 //   4. Score, filter (< 6 discarded), cap at 10, rank descending
 //   5. Format ranked queue text with [PRIORITY] tags for high-value opportunities
@@ -80,11 +81,90 @@ export function createPluginConfig(runtime: IAgentRuntime): PluginConfig {
 // Helpers
 // ---------------------------------------------------------------------------
 
+
+
+// ---------------------------------------------------------------------------
+// Keyword Cache (WP8.3 — 6h TTL, file-based)
+// ---------------------------------------------------------------------------
+
+/**
+ * Keyword cache configuration.
+ * Cache file stores extracted keywords with a 6-hour TTL to avoid redundant RAG queries.
+ * Cache file path is relative to the engine's data directory.
+ */
+const KEYWORD_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const KEYWORD_CACHE_PATH = path.resolve(process.cwd(), "data", "keyword_cache.json");
+
+interface KeywordCache {
+  /** ISO timestamp when the cache was created */
+  cachedAt: string;
+  /** The extracted (and merged) keywords */
+  keywords: string[];
+}
+
+/**
+ * Read keyword cache from disk.
+ * Returns null if cache is missing, expired, or corrupted.
+ */
+function readKeywordCache(): KeywordCache | null {
+  try {
+    if (!fs.existsSync(KEYWORD_CACHE_PATH)) {
+      return null;
+    }
+    const raw = fs.readFileSync(KEYWORD_CACHE_PATH, "utf-8");
+    const cache: KeywordCache = JSON.parse(raw);
+    const age = Date.now() - new Date(cache.cachedAt).getTime();
+    if (age > KEYWORD_CACHE_TTL_MS) {
+      elizaLogger.log("[ARCHON-v2][SCOUT-CACHE] Keyword cache expired (age: " + Math.round(age / 60000) + "m, TTL: 360m)");
+      return null;
+    }
+    return cache;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write keyword cache to disk.
+ */
+function writeKeywordCache(keywords: string[]): void {
+  try {
+    const dir = path.dirname(KEYWORD_CACHE_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const cache: KeywordCache = {
+      cachedAt: new Date().toISOString(),
+      keywords,
+    };
+    fs.writeFileSync(KEYWORD_CACHE_PATH, JSON.stringify(cache, null, 2), "utf-8");
+  } catch (err) {
+    elizaLogger.warn("[ARCHON-v2][SCOUT-CACHE] Failed to write keyword cache: " + String(err));
+  }
+}
+
 /**
  * Extract keywords from RAG knowledge (target_list.md) if available.
  * Falls back to DEFAULT_KEYWORDS if RAG is disabled or knowledge not found.
+ *
+ * Includes a cache layer (WP8.3): results are cached for 6h (KEYWORD_CACHE_TTL_MS).
+ * Re-extraction from RAG only happens if cache is expired or empty.
+ * Cache hits/misses logged with [ARCHON-v2][SCOUT-CACHE] tag.
  */
 async function extractKeywordsFromKnowledge(runtime: IAgentRuntime): Promise<string[]> {
+  // Check cache first
+  const cached = readKeywordCache();
+  if (cached && cached.keywords.length > 0) {
+    elizaLogger.log("[ARCHON-v2][SCOUT-CACHE] Cache HIT — using cached keywords (" + cached.keywords.length + " keywords)");
+    return cached.keywords;
+  }
+
+  if (cached === null) {
+    elizaLogger.log("[ARCHON-v2][SCOUT-CACHE] Cache MISS — re-extracting from RAG");
+  } else {
+    elizaLogger.log("[ARCHON-v2][SCOUT-CACHE] Cache empty — extracting from RAG");
+  }
+
   try {
     // Try direct knowledge table FIRST (most reliable path)
     let targetListEntries: any[] = [];
@@ -129,6 +209,8 @@ async function extractKeywordsFromKnowledge(runtime: IAgentRuntime): Promise<str
       elizaLogger.info(
         "[neynar-search] target list files not found in RAG knowledge. Using DEFAULT_KEYWORDS."
       );
+      // Cache the defaults to avoid hitting RAG every cycle
+      writeKeywordCache(DEFAULT_KEYWORDS);
       return DEFAULT_KEYWORDS;
     }
     
@@ -188,15 +270,30 @@ async function extractKeywordsFromKnowledge(runtime: IAgentRuntime): Promise<str
         `[neynar-search] Extracted ${extractedKeywords.length} vector/hashtag keywords from RAG, ` +
         `merged with ${DEFAULT_KEYWORDS.length} defaults (total: ${mergedKeywords.length})`
       );
+
+      // Cache the merged keywords
+      writeKeywordCache(mergedKeywords);
       
       return mergedKeywords;
     }
     
     elizaLogger.info("[neynar-search] No keywords extracted from RAG. Using defaults.");
+    // Cache the defaults
+    writeKeywordCache(DEFAULT_KEYWORDS);
     return DEFAULT_KEYWORDS;
     
   } catch (err) {
     elizaLogger.warn("[neynar-search] Error reading RAG knowledge: " + String(err));
+    // On error, try cache fallback even if expired
+    try {
+      const staleCache = readKeywordCache();
+      if (staleCache) {
+        elizaLogger.log("[ARCHON-v2][SCOUT-CACHE] RAG error — using stale cached keywords as fallback");
+        return staleCache.keywords;
+      }
+    } catch {
+      // ignore cache error
+    }
     return DEFAULT_KEYWORDS;
   }
 }
@@ -255,6 +352,7 @@ function formatQueue(
         : op.suggestedAngle;
 
       lines.push(`${i + 1}. SCORE ${op.score}/10 [BELOW THRESHOLD] — @${op.author.username}`);
+      lines.push(`   ${op.score >= 8 ? "[QUOTE_CANDIDATE]" : "[REPLY_CANDIDATE]"}`);
       lines.push(`   URL: ${op.castUrl}`);
       lines.push(
         `   Reach: ${op.author.follower_count.toLocaleString()} followers${op.author.power_badge ? " [⚡ power badge]" : ""}`
@@ -295,6 +393,7 @@ function formatQueue(
     const priorityTag = op.score >= 8 ? " [PRIORITY]" : "";
 
     lines.push(`${i + 1}. SCORE ${op.score}/10${priorityTag} — @${op.author.username}`);
+    lines.push(`   ${op.score >= 8 ? "[QUOTE_CANDIDATE]" : "[REPLY_CANDIDATE]"}`);
     lines.push(`   URL: ${op.castUrl}`);
     lines.push(
       `   Reach: ${op.author.follower_count.toLocaleString()} followers${op.author.power_badge ? " [⚡ power badge]" : ""}`
@@ -729,7 +828,7 @@ export const searchFarcasterAction: Action = {
     const cycleNumber = getNextCycleNumber();
     elizaLogger.log(`[neynar-search] Cycle #${cycleNumber} — determining which tiers to run`);
 
-    // 4. Extract keywords
+    // 4. Extract keywords (with WP8.3 cache layer — 6h TTL)
     const messageText = (message?.content?.text as string) ?? "";
     const keywords = await extractKeywords(messageText, runtime);
 
@@ -794,7 +893,7 @@ export const searchFarcasterAction: Action = {
       {
         user: "The Scout",
         content: {
-          text: "[SCOUT CYCLE 2024-01-15T10:00:00Z] — 3 opportunity(ies) queued\n\n1. SCORE 9/10 [PRIORITY] — @ischinger\n   URL: https://warpcast.com/ischinger/0x1a2b3c4d\n   Reach: 84,700 followers [⚡ power badge]\n   Engagement: 847L / 32RC / 62R (941 total)\n   Keywords: EU energy, European sovereignty\n   Angle: Lead with a data-rich counterpoint on \"EU energy\" — @ischinger's 941 total interactions signal peak thread momentum.\n\nQueue delivered to Archon. 3 item(s). Cycle complete.",
+          text: "[SCOUT CYCLE 2024-01-15T10:00:00Z] — 3 opportunity(ies) queued\n\n1. SCORE 9/10 [PRIORITY] — @ischinger\n   [QUOTE_CANDIDATE]\n   URL: https://warpcast.com/ischinger/0x1a2b3c4d\n   Reach: 84,700 followers [⚡ power badge]\n   Engagement: 847L / 32RC / 62R (941 total)\n   Keywords: EU energy, European sovereignty\n   Angle: Lead with a data-rich counterpoint on \"EU energy\" — @ischinger's 941 total interactions signal peak thread momentum.\n\nQueue delivered to Archon. 3 item(s). Cycle complete.",
           action: "SEARCH_FARCASTER",
         },
       },
