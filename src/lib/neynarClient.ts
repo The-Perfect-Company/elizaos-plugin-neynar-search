@@ -378,11 +378,11 @@ export async function likeCast(
   signerUuid: string,
   castHash: string
 ): Promise<boolean> {
-  const url = `${NEYNAR_BASE}/v2/farcaster/reactions`;
+  const url = `${NEYNAR_BASE}/v2/farcaster/reaction`;
   const startTime = Date.now();
 
   elizaLogger.info(
-    `[LIKE] likeCast hash=${castHash} — POST /v2/farcaster/reactions`
+    `[LIKE] likeCast hash=${castHash} — POST /v2/farcaster/reaction`
   );
 
   try {
