@@ -1,14 +1,14 @@
 # @elizaos/plugin-neynar-search
 
-**Read-only Farcaster engagement discovery for ElizaOS agents via the Neynar REST API.**
+**Farcaster engagement discovery, engagement (likes), and relationship management (follow/unfollow) for ElizaOS agents via the Neynar REST API.**
 
-No signer. No posting. No Farcaster client dependency. Pure signal detection.
+Read-only discovery (Scout) + signer-based write actions (Archon): likes, follows, unfollows.
 
 ---
 
 ## What it does
 
-Registers three actions:
+Registers five actions:
 
 ### `SEARCH_FARCASTER` — Discovery & Delivery
 
@@ -52,6 +52,32 @@ Designed for a **publishing agent** (e.g. Archon Europae) that batch-likes Farca
 8. **Tracks state** in `dm-state.json`: processed DM hashes, sent reply hashes, daily reply counts, pending queue
 
 Designed for a **publishing agent** (e.g. Archon Europae) that processes its own inbound Direct Casts using a configured Neynar signer UUID for replies.
+
+### `FOLLOW_FARCASTER` — Follow Profiles from Scout's Watchlist
+
+1. **Loads config** from runtime settings (`FOLLOW_MAX_PER_CYCLE`, `FOLLOW_SPAM_MIN_FOLLOWERS`) and state from `follow-state.json`
+2. **Builds candidate set** by reading the Scout's auto-discovered watchlist via `getAutoDiscoveredFids()` — these are high-scoring authors already identified by `SEARCH_FARCASTER`
+3. **Filters candidates** through three gates:
+   - **Already-followed check** — skip any FID already in `followedFids` list
+   - **Profile lookup** — calls `GET /v2/farcaster/user/bulk?fids=FID` to fetch follower count and profile details
+   - **Spam filter** — rejects accounts with fewer than `FOLLOW_SPAM_MIN_FOLLOWERS` followers (default: 10) or matching known spam patterns (crypto giveaways, airdrops, random-character usernames)
+4. **Executes follows** via `POST /v2/farcaster/follows` (signer-based), up to `FOLLOW_MAX_PER_CYCLE` (default: 5)
+5. **Tracks state** in `follow-state.json`: `followedFids`, timestamps, cycle count, total executed
+6. **Logs per-cycle results** with `[NeynarDebug]` prefix: followed count, attempted, spam-filtered, already-followed, errors
+
+Designed for a **publishing agent** (e.g. Archon Europae) that follows high-quality profiles discovered by the Scout. Runs every **12 hours** via cron (03:00 and 15:00 UTC).
+
+### `UNFOLLOW_FARCASTER` — Weekly Reciprocal Unfollow Check
+
+1. **Loads state** from `follow-state.json`, including saved `followerCursor` for staggered pagination
+2. **Fetches 1 page of followers** via `GET /v2/farcaster/followers?fid={ARCHON_FID}&limit=150&cursor={cursor}` — staggered at 1 page per weekly cycle to spread API cost across time
+3. **Compares against followed FIDs**: any FID in `followedFids` that does NOT appear in this page is a non-reciprocal follow — candidate for unfollow
+4. **Executes unfollows** via `DELETE /v2/farcaster/follows` (signer-based), up to `UNFOLLOW_MAX_PER_CYCLE` (default: 5)
+5. **Saves cursor** via `updateFollowerCursor()` — next cycle resumes where this one left off. Full follower list coverage is achieved over `ceil(totalFollowers / 150)` weeks.
+6. **Tracks state**: `unfollowCycleCount`, `followerPageChecked`, `lastUnfollowCycle` timestamp
+7. **Logs per-cycle results** with `[NeynarDebug]` prefix: unfollowed count, page size, remaining pages, checked FIDs
+
+Designed for a **publishing agent** (e.g. Archon Europae) that maintains a healthy follow graph by periodically checking if previously-followed accounts still follow back — without consuming excessive Neynar credits in a single cycle.
 
 ---
 
@@ -113,7 +139,18 @@ All optional settings have sensible defaults. Override any of them via environme
 | `DM_MIN_SCORE` | `30` | Minimum priority score (0–100) for a DM to receive a reply |
 | `DM_DAILY_REPLY_LIMIT` | `10` | Maximum DM replies per day (protects Neynar credit budget) |
 
-### Example: `character.json`
+### Optional — FOLLOW_FARCASTER & UNFOLLOW_FARCASTER (Follow/Unfollow)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `FARCASTER_NEYNAR_SIGNER_UUID` | *(required for follow/unfollow)* | Neynar signer UUID for the Farcaster account that performs follows/unfollows |
+| `ARCHON_FID` | *(required for unfollow)* | FID of the account to check followers against (for reciprocal check) |
+| `FOLLOW_MAX_PER_CYCLE` | `5` | Maximum number of follows per 12h cycle (ultra-safe to avoid suspicious activity) |
+| `FOLLOW_SPAM_MIN_FOLLOWERS` | `10` | Minimum follower count for a profile to be followed (spam filter) |
+| `UNFOLLOW_MAX_PER_CYCLE` | `5` | Maximum number of unfollows per weekly cycle |
+| `FOLLOW_STATE_PATH` | `/app/.neynar-state/follow-state.json` | Path to persist follow/unfollow state across cycles |
+
+### Example: `character.json` — Scout (read-only agent)
 
 ```json
 {
@@ -134,6 +171,28 @@ All optional settings have sensible defaults. Override any of them via environme
 ```
 
 > **Important:** Use only `"direct"` in the `clients` array. The `auto` client drives autonomous posting — a read-only discovery agent must not post anything. The `direct` client exposes the HTTP endpoint that `scout_cycle.sh` calls.
+
+### Example: `character.json` — Archon (publishing agent with signer)
+
+```json
+{
+  "plugins": ["@elizaos/plugin-neynar-search"],
+  "clients": ["farcaster", "direct"],
+  "settings": {
+    "secrets": {
+      "FARCASTER_NEYNAR_API_KEY": "your-neynar-api-key",
+      "FARCASTER_NEYNAR_SIGNER_UUID": "your-signer-uuid",
+      "ARCHON_FID": "3315139",
+      "FOLLOW_MAX_PER_CYCLE": "5",
+      "FOLLOW_SPAM_MIN_FOLLOWERS": "10",
+      "UNFOLLOW_MAX_PER_CYCLE": "5",
+      "FOLLOW_STATE_PATH": "/app/.neynar-state/follow-state.json"
+    }
+  }
+}
+```
+
+> **Note:** The signer-based actions (`LIKE_FARCASTER`, `FOLLOW_FARCASTER`, `UNFOLLOW_FARCASTER`) must run on an agent with a configured Neynar signer UUID — typically Archon Europae, which has `"farcaster"` in its `clients` array and a Neynar signer bound to its Farcaster account. The Scout (read-only) does not need `FARCASTER_NEYNAR_SIGNER_UUID`.
 
 Or set any setting via environment variable:
 
@@ -294,6 +353,97 @@ POST http://localhost:3000/{ARCHON_AGENT_ID}/message
 
 ---
 
+## Usage — FOLLOW_FARCASTER
+
+The FOLLOW_FARCASTER action is triggered by messaging the agent:
+
+```
+Run follow cycle.
+```
+
+The action reads the Scout's watchlist, filters candidates through spam and already-followed checks, and executes follows:
+
+```
+[NeynarDebug] ===== FOLLOW cycle #3 starting (2026-06-01T03:00:00Z) =====
+[NeynarDebug] Follow config: maxPerCycle=5, spamMinFollowers=10, signerUuid=***abc
+[NeynarDebug] Loading follow state from /app/.neynar-state/follow-state.json
+[NeynarDebug] Follow state loaded: 47 followed FIDs, last cycle 2026-05-31T15:00:00Z
+[NeynarDebug] Building candidate set from Scout watchlist...
+[NeynarDebug] Watchlist yielded 12 auto-discovered FIDs
+[NeynarDebug] Filtering 12 candidates (already-followed, spam, min followers)...
+[NeynarDebug]   SKIP fid=1234 (@already_followed_user) — already in followedFids
+[NeynarDebug]   SKIP fid=5678 (@low_follower_user) — followers 3 < min 10
+[NeynarDebug]   SKIP fid=9012 (@giveaway_bot) — spam pattern matched
+[NeynarDebug]   PASS fid=3456 (@high_quality_user) — followers 1250 ✓, no spam patterns ✓
+[NeynarDebug]   PASS fid=7890 (@another_good_user) — followers 4200 ✓, no spam patterns ✓
+[NeynarDebug] Executing 2 follows via POST /v2/farcaster/follows...
+[NeynarDebug]   ✓ Followed fid=3456 (@high_quality_user) — SUCCESS
+[NeynarDebug]   ✓ Followed fid=7890 (@another_good_user) — SUCCESS
+[NeynarDebug] Saving follow state: followedFids=49, cycleCount=3
+[NeynarDebug] ===== FOLLOW cycle #3 complete =====
+[NeynarDebug] Summary: 12 candidates → 2 followed, 3 already-followed, 5 spam-filtered, 2 errors
+[NeynarDebug] Total follows executed all-time: 49
+```
+
+The action is driven by a cron job on the host (every 12 hours):
+
+```bash
+# Install on the host (run once):
+(crontab -l 2>/dev/null; echo "0 3,15 * * * /root/agents-ecosystem/engine/scripts/follow_cycle.sh >> /var/log/follow_cycle.log 2>&1") | crontab -
+```
+
+The script [`scripts/follow_cycle.sh`](../../agents-ecosystem/engine/scripts/follow_cycle.sh) sends a follow trigger via `curl` to:
+
+```
+POST http://localhost:3000/{ARCHON_AGENT_ID}/message
+```
+
+---
+
+## Usage — UNFOLLOW_FARCASTER
+
+The UNFOLLOW_FARCASTER action is triggered by messaging the agent:
+
+```
+Run unfollow cycle.
+```
+
+The action fetches 1 page of Archon's followers (staggered pagination), compares against the followed FIDs list, and unfollows non-reciprocal accounts:
+
+```
+[NeynarDebug] ===== UNFOLLOW cycle #1 starting (2026-06-01T04:00:00Z) =====
+[NeynarDebug] Unfollow config: maxPerCycle=5, archonFid=3315139
+[NeynarDebug] Loading follow state from /app/.neynar-state/follow-state.json
+[NeynarDebug] Follow state loaded: 49 followed FIDs, cursor="eyJwYWdlIjoxfQ==", last unfollow never
+[NeynarDebug] Fetching 1 page of followers (limit=150) with cursor="eyJwYWdlIjoxfQ=="...
+[NeynarDebug] getFollowersPage returned 150 followers, nextCursor="eyJwYWdlIjoyfQ=="
+[NeynarDebug] Comparing 150 page FIDs against 49 followed FIDs...
+[NeynarDebug] Found 3 non-reciprocal follows (not in this page)
+[NeynarDebug] Unfollowing 3 accounts via DELETE /v2/farcaster/follows...
+[NeynarDebug]   ✓ Unfollowed fid=1111 (@no_longer_follows) — SUCCESS
+[NeynarDebug]   ✓ Unfollowed fid=2222 (@left_farcaster) — SUCCESS
+[NeynarDebug]   ✗ Unfollowed fid=3333 (@error_case) — FAILED: rate limited
+[NeynarDebug] Saving cursor "eyJwYWdlIjoyfQ==" for next cycle (page 2/3 estimated)
+[NeynarDebug] ===== UNFOLLOW cycle #1 complete =====
+[NeynarDebug] Summary: 150 followers checked, 2 unfollowed, 1 error(s), 3 estimated pages remaining
+[NeynarDebug] Total unfollows executed all-time: 2
+```
+
+The action is driven by a cron job on the host (weekly on Sunday):
+
+```bash
+# Install on the host (run once):
+(crontab -l 2>/dev/null; echo "0 4 * * 0 /root/agents-ecosystem/engine/scripts/unfollow_cycle.sh >> /var/log/unfollow_cycle.log 2>&1") | crontab -
+```
+
+The script [`scripts/unfollow_cycle.sh`](../../agents-ecosystem/engine/scripts/unfollow_cycle.sh) sends an unfollow trigger via `curl` to:
+
+```
+POST http://localhost:3000/{ARCHON_AGENT_ID}/message
+```
+
+---
+
 
 
 ## Scoring Algorithm
@@ -389,9 +539,31 @@ Configure the target via `ARCHON_BASE_URL` and `ARCHON_AGENT_ID` runtime setting
 
 **Auth**: `api_key` header + `signer_uuid` for the message endpoint. Notifications and user lookup are read-only (api_key only). Sending DMs costs ~5 Neynar credits each.
 
+### FOLLOW_FARCASTER (Archon — write)
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/v2/farcaster/user/bulk?fids=FID` | Lookup candidate profile (follower count, profile details) for spam filtering |
+| POST | `/v2/farcaster/follows` | Follow one or more FIDs (signer-based). Request body: `{ "signer_uuid": "...", "target_fids": [FID1, FID2, ...] }` |
+
+**Auth**: `api_key` header + `signer_uuid` in request body. Profile lookup is read-only (api_key only). Following costs ~5 Neynar credits per follow.
+
+### UNFOLLOW_FARCASTER (Archon — write)
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/v2/farcaster/followers?fid={FID}&limit=150&cursor={CURSOR}` | Fetch 1 page of Archon's followers (staggered pagination) |
+| DELETE | `/v2/farcaster/follows` | Unfollow one or more FIDs (signer-based). Request body: `{ "signer_uuid": "...", "target_fids": [FID1, FID2, ...] }` |
+
+**Auth**: `api_key` header + `signer_uuid` for the unfollow endpoint. Follower list fetch is read-only (api_key only). Unfollowing costs ~5 Neynar credits per unfollow.
+
 ---
 
 ## Trigger mechanism
+
+The ecosystem uses multiple cron-driven scripts to trigger actions via agents' DirectClient HTTP endpoints:
+
+### SEARCH_FARCASTER — Scout (every 3h)
 
 The Scout agent is driven by a cron job on the host that calls its `DirectClient` HTTP endpoint every 3 hours:
 
@@ -407,6 +579,40 @@ POST http://localhost:3003/{SCOUT_AGENT_ID}/message
 ```
 
 This triggers the `SEARCH_FARCASTER` action inside the container and returns the ranked queue to the shell log.
+
+### FOLLOW_FARCASTER — Archon (every 12h)
+
+The follow cycle runs twice daily via cron at staggered slots (03:00 and 15:00 UTC):
+
+```bash
+# Install on the host (run once):
+(crontab -l 2>/dev/null; echo "0 3,15 * * * /root/agents-ecosystem/engine/scripts/follow_cycle.sh >> /var/log/follow_cycle.log 2>&1") | crontab -
+```
+
+The script [`scripts/follow_cycle.sh`](../../agents-ecosystem/engine/scripts/follow_cycle.sh) sends a follow trigger via `curl` to:
+
+```
+POST http://localhost:3000/{ARCHON_AGENT_ID}/message
+```
+
+This triggers the `FOLLOW_FARCASTER` action, which reads the Scout's watchlist, filters candidates, and executes follows.
+
+### UNFOLLOW_FARCASTER — Archon (weekly on Sunday)
+
+The unfollow cycle runs once per week on Sunday at 04:00 UTC:
+
+```bash
+# Install on the host (run once):
+(crontab -l 2>/dev/null; echo "0 4 * * 0 /root/agents-ecosystem/engine/scripts/unfollow_cycle.sh >> /var/log/unfollow_cycle.log 2>&1") | crontab -
+```
+
+The script [`scripts/unfollow_cycle.sh`](../../agents-ecosystem/engine/scripts/unfollow_cycle.sh) sends an unfollow trigger via `curl` to:
+
+```
+POST http://localhost:3000/{ARCHON_AGENT_ID}/message
+```
+
+This triggers the `UNFOLLOW_FARCASTER` action, which fetches 1 page of Archon's followers, checks reciprocal follows, and unfollows non-reciprocal accounts.
 
 ---
 
@@ -497,16 +703,21 @@ pnpm install
 ```
 elizaos-plugin-neynar-search/
 ├── src/
-│   ├── index.ts                    # Plugin entry point — registers SEARCH_FARCASTER, LIKE_FARCASTER, and REPLY_DIRECT_CAST
-│   ├── types.ts                    # NeynarCast, ScoredOpportunity, DmConfig, DmPriorityState, LikeConfig, LikeState, LikeCycleResult
+│   ├── index.ts                    # Plugin entry point — registers 5 actions (SEARCH, LIKE, REPLY_DC, FOLLOW, UNFOLLOW)
+│   ├── types.ts                    # NeynarCast, ScoredOpportunity, DmConfig, DmPriorityState, LikeConfig, LikeState,
+│   │                               # LikeCycleResult, FollowConfig, FollowState, FollowCycleResult, UnfollowCycleResult
 │   ├── actions/
 │   │   ├── searchFarcaster.ts      # SEARCH_FARCASTER action (Scout: keyword search → score → deliver)
 │   │   ├── likeFarcaster.ts        # LIKE_FARCASTER action (Archon: retrieve deliveries → resolve → batch-like)
-│   │   └── replyDirectCast.ts      # REPLY_DIRECT_CAST action (Archon: fetch DMs → filter spam → score → reply)
+│   │   ├── replyDirectCast.ts      # REPLY_DIRECT_CAST action (Archon: fetch DMs → filter spam → score → reply)
+│   │   ├── followFarcaster.ts      # FOLLOW_FARCASTER action (Archon: watchlist → spam filter → follow)
+│   │   └── unfollowFarcaster.ts    # UNFOLLOW_FARCASTER action (Archon: staggered pagination → reciprocal check → unfollow)
 │   └── lib/
-│       ├── neynarClient.ts         # Raw fetch HTTP wrappers (searchCasts, getUserCasts, lookupCast, lookupUserByFid, likeCast, batchLikeCasts, sendDirectCast)
+│       ├── neynarClient.ts         # Raw fetch HTTP wrappers (searchCasts, getUserCasts, lookupCast, lookupUserByFid,
+│       │                           # likeCast, batchLikeCasts, sendDirectCast, followUsers, unfollowUsers, getFollowersPage)
 │       ├── scorer.ts               # Three-axis scoring engine
 │       ├── likeState.ts            # Like state persistence (daily budget tracking, window reset, load/save)
+│       ├── followState.ts          # Follow/unfollow state persistence (followedFids, staggered pagination cursor, load/save)
 │       ├── cache.ts                # Search result cache with TTL
 │       └── watchlist.ts            # Auto-discovery author watchlist
 ├── package.json
