@@ -8,7 +8,9 @@ No signer. No posting. No Farcaster client dependency. Pure signal detection.
 
 ## What it does
 
-Registers a `SEARCH_FARCASTER` action that:
+Registers two actions:
+
+### `SEARCH_FARCASTER` — Discovery & Delivery
 
 1. **Dynamically extracts keywords** from the agent's RAG knowledge (prioritizing `farcaster_target_list.md` and `twitter_target_list.md` content from the `knowledge` table) or parses them from the triggering message.
 2. **Searches Farcaster casts** matching the keyword corpus via `GET /v2/farcaster/cast/search`.
@@ -18,6 +20,16 @@ Registers a `SEARCH_FARCASTER` action that:
 6. **Delivers the ranked queue** (post URL, handle, engagement counts, score, suggested reply angle) to a target agent's DirectClient endpoint.
 
 Designed for a **Scout agent** that feeds engagement opportunities to a publishing agent (e.g. Archon Europae) without ever touching the social graph itself.
+
+### `LIKE_FARCASTER` — Batch Liking
+
+1. **Retrieves Scout deliveries** from the target agent's memory (memories tagged `[SCOUT DELIVERY]`)
+2. **Resolves short cast hashes** to full Neynar cast objects via `GET /v2/farcaster/cast?identifier=...&type=url`
+3. **Batch-likes** up to the daily budget limit via `POST /v2/farcaster/reaction` (signer-based)
+4. **Tracks daily budget** in `like-state.json` with automatic window reset at midnight UTC
+5. **Logs per-cycle results** with breakdown: Scout-sourced vs extra casts, daily remaining budget, failures
+
+Designed for a **publishing agent** (e.g. Archon Europae) that batch-likes Farcaster posts delivered by the Scout, using a configured Neynar signer UUID.
 
 ---
 
@@ -41,7 +53,7 @@ pnpm add @elizaos/plugin-neynar-search
 |---------|-------------|
 | `FARCASTER_NEYNAR_API_KEY` | Neynar API key for all API calls. Get a free key at [neynar.com](https://neynar.com). |
 
-### Optional
+### Optional — SEARCH_FARCASTER (Scout)
 
 All optional settings have sensible defaults. Override any of them via environment variables or `character.json` > `settings.secrets`.
 
@@ -53,6 +65,19 @@ All optional settings have sensible defaults. Override any of them via environme
 | `TARGET_LIST_JSON_PATH` | `{cwd}/characters/archon_europae/farcaster_target_list.json` | Path to the generated target list JSON (Tier 2 profile monitoring) |
 | `SCOUT_MAX_RESULTS` | `5` | Maximum number of opportunities in the ranked queue |
 | `SCOUT_MIN_SCORE` | `6` | Minimum score threshold; casts below this are discarded (unless fallback triggers) |
+
+### Optional — LIKE_FARCASTER (Liking)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `FARCASTER_NEYNAR_SIGNER_UUID` | *(required for liking)* | Neynar signer UUID for the Farcaster account that performs the likes |
+| `ARCHON_AGENT_ID` | `187939ae-c36e-08ef-836f-131b1b658c9a` | Agent ID whose memories are queried for Scout deliveries |
+| `LIKE_DAILY_MAX` | `270` | Maximum number of likes per rolling 24h window |
+| `LIKE_BATCH_SIZE` | `10` | Maximum casts per single `batchLikeCasts` call |
+| `LIKE_BATCH_DELAY_MS` | `2000` | Delay (ms) between batches to avoid rate limits |
+| `LIKE_PER_CAST_DELAY_MS` | `500` | Delay (ms) between individual `likeCast` calls |
+| `LIKE_EXTRA_PER_CYCLE` | `5` | Additional non-Scout hashes to like per cycle (from extraCastHashes config) |
+| `LIKE_STATE_PATH` | `/app/.neynar-state/like-state.json` | Path to persist like budget/state across cycles |
 
 ### Example: `character.json`
 
@@ -86,7 +111,7 @@ SCOUT_MAX_RESULTS=10
 
 ---
 
-## Usage
+## Usage — SEARCH_FARCASTER
 
 Trigger the action by messaging the agent:
 
@@ -135,6 +160,47 @@ Fallback queue delivered to Archon. 5 item(s) (all below 6/10 threshold). Cycle 
 ```
 
 ---
+
+## Usage — LIKE_FARCASTER
+
+The LIKE action is triggered by messaging the agent:
+
+```
+Run like cycle.
+```
+
+The action retrieves Scout deliveries from memory, resolves cast hashes via Neynar, and batch-likes them:
+
+```
+[LIKE] ===== LIKE cycle #12 starting =====
+[LIKE] Scout deliveries found: 12 delivery memories, 56 cast URLs
+[LIKE] Cast URLs to process: 56
+[LIKE] Resolving 6 unique short hashes...
+[LIKE] lookupCast succeeded for 5/6 hashes
+[LIKE] Like batch 1/1: 5 casts
+[LIKE]   ✓ Cast 1/5: https://warpcast.com/ischinger/0x1a2b3c → SUCCESS
+[LIKE]   ✓ Cast 2/5: https://warpcast.com/user/0x4d5e6f → SUCCESS
+[LIKE]   ✓ Cast 3/5: https://warpcast.com/other/0x7g8h9i → SUCCESS
+[LIKE]   ✓ Cast 4/5: https://warpcast.com/author/0x0j1k2l → SUCCESS
+[LIKE]   ✓ Cast 5/5: https://warpcast.com/handle/0x3m4n5o → SUCCESS
+[LIKE] LIKE cycle #12 complete. Liked 5 casts (5 Scout + 0 extra). Daily: 265/270 remaining. Failed: 0.
+```
+
+The action is driven by a cron job on the host:
+
+```bash
+# Install on the host (run once):
+(crontab -l 2>/dev/null; echo "0 */3 * * * /root/agents-ecosystem/engine/scripts/like_cycle.sh >> /root/agents-ecosystem/engine/logs/quotes/like_cycle.log 2>&1") | crontab -
+```
+
+The script [`scripts/like_cycle.sh`](../../scripts/like_cycle.sh) sends a like trigger via `curl` to:
+
+```
+POST http://localhost:3000/{ARCHON_AGENT_ID}/message
+```
+
+---
+
 
 ## Scoring Algorithm
 
@@ -200,6 +266,8 @@ Configure the target via `ARCHON_BASE_URL` and `ARCHON_AGENT_ID` runtime setting
 
 ## Neynar API endpoints used
 
+### SEARCH_FARCASTER (Scout — read-only)
+
 | Method | Endpoint | Purpose | Tier |
 |--------|----------|---------|:----:|
 | GET | `/v2/farcaster/cast/search?q=QUERY&limit=25` | Keyword cast search | T1 |
@@ -207,6 +275,15 @@ Configure the target via `ARCHON_BASE_URL` and `ARCHON_AGENT_ID` runtime setting
 | GET | `/v2/farcaster/notifications?fid={FID}&limit=25` | Inbound engagement detection | T3 |
 
 **Auth**: `api_key` header. No signer UUID. Fully read-only.
+
+### LIKE_FARCASTER (Archon — write)
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/v2/farcaster/cast?identifier=URL&type=url` | Resolve short cast hashes to full cast objects (pre-like validation) |
+| POST | `/v2/farcaster/reaction` | Like a cast (signer-based). Request body: `{ "signer_uuid": "...", "reaction_type": "like", "target": "cast", "target_fid": FID, "target_hash": "0x..." }` |
+
+**Auth**: `api_key` header + `signer_uuid` in request body. Requires a Neynar plan with signer-based write access.
 
 ---
 
@@ -316,13 +393,15 @@ pnpm install
 ```
 elizaos-plugin-neynar-search/
 ├── src/
-│   ├── index.ts                    # Plugin entry point
-│   ├── types.ts                    # NeynarCast, ScoredOpportunity interfaces
+│   ├── index.ts                    # Plugin entry point — registers both SEARCH_FARCASTER and LIKE_FARCASTER
+│   ├── types.ts                    # NeynarCast, ScoredOpportunity, LikeConfig, LikeState, LikeCycleResult
 │   ├── actions/
-│   │   └── searchFarcaster.ts      # SEARCH_FARCASTER action
+│   │   ├── searchFarcaster.ts      # SEARCH_FARCASTER action (Scout: keyword search → score → deliver)
+│   │   └── likeFarcaster.ts        # LIKE_FARCASTER action (Archon: retrieve deliveries → resolve → batch-like)
 │   └── lib/
-│       ├── neynarClient.ts         # Raw fetch HTTP wrappers
+│       ├── neynarClient.ts         # Raw fetch HTTP wrappers (searchCasts, getUserCasts, lookupCast, likeCast, batchLikeCasts)
 │       ├── scorer.ts               # Three-axis scoring engine
+│       ├── likeState.ts            # Like state persistence (daily budget tracking, window reset, load/save)
 │       ├── cache.ts                # Search result cache with TTL
 │       └── watchlist.ts            # Auto-discovery author watchlist
 ├── package.json
