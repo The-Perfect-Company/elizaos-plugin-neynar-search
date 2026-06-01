@@ -8,7 +8,7 @@ No signer. No posting. No Farcaster client dependency. Pure signal detection.
 
 ## What it does
 
-Registers two actions:
+Registers three actions:
 
 ### `SEARCH_FARCASTER` — Discovery & Delivery
 
@@ -30,6 +30,28 @@ Designed for a **Scout agent** that feeds engagement opportunities to a publishi
 5. **Logs per-cycle results** with breakdown: Scout-sourced vs extra casts, daily remaining budget, failures
 
 Designed for a **publishing agent** (e.g. Archon Europae) that batch-likes Farcaster posts delivered by the Scout, using a configured Neynar signer UUID.
+
+### `REPLY_DIRECT_CAST` — DM Processing & Reply
+
+1. **Fetches pending Direct Casts** via Neynar `GET /v2/farcaster/notifications` — the same endpoint already used by the Scout for Tier 3, but now includes `direct_cast` type in the filter. **Zero additional API credits** for receiving DMs.
+2. **Filters spam** using configurable thresholds:
+   - Minimum follower count (default: 50; 200 for non-power-badge senders)
+   - Regex pattern matching against known spam patterns (crypto scams, giveaways, unsolicited promotions)
+   - Deduplication against already-processed DM hashes
+3. **Reviews past interactions** by querying the agent's in-memory message history for previous conversations with the sender
+4. **Reviews current knowledge** on the DM subject using semantic embedding search (RAG similarity scoring against the agent's knowledge base)
+5. **Scores each DM** on a 0–100 priority scale based on:
+   - Base score: 20
+   - Mutual follower status: +15
+   - Power badge holder: +10
+   - Follower count tiers: +5 (1K+), +10 (10K+), +15 (50K+)
+   - Past interaction history: +10
+   - Knowledge relevance similarity (0–30, scaled from embedding cosine similarity)
+6. **Generates context-aware replies** using the agent's LLM, incorporating sender profile, past interactions, and DM content into the prompt context
+7. **Sends replies** via Neynar `POST /v2/farcaster/message` (signer-based write)
+8. **Tracks state** in `dm-state.json`: processed DM hashes, sent reply hashes, daily reply counts, pending queue
+
+Designed for a **publishing agent** (e.g. Archon Europae) that processes its own inbound Direct Casts using a configured Neynar signer UUID for replies.
 
 ---
 
@@ -78,6 +100,18 @@ All optional settings have sensible defaults. Override any of them via environme
 | `LIKE_PER_CAST_DELAY_MS` | `500` | Delay (ms) between individual `likeCast` calls |
 | `LIKE_EXTRA_PER_CYCLE` | `5` | Additional non-Scout hashes to like per cycle (from extraCastHashes config) |
 | `LIKE_STATE_PATH` | `/app/.neynar-state/like-state.json` | Path to persist like budget/state across cycles |
+
+### Optional — REPLY_DIRECT_CAST (DM Processing)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `DM_POLL_INTERVAL` | `3600` | Poll interval in seconds (default: 3600 = 1h) |
+| `DM_MIN_FOLLOWERS` | `50` | Minimum followers for DM sender to pass spam filter |
+| `DM_MIN_FOLLOWERS_POWER` | `200` | Minimum followers for non-power-badge senders (tighter threshold) |
+| `DM_MAX_PER_SENDER` | `3` | Maximum DMs processed per sender in 24h rolling window |
+| `DM_MAX_PER_CYCLE` | `3` | Maximum DMs to process per cycle (caps Neynar API credit usage) |
+| `DM_MIN_SCORE` | `30` | Minimum priority score (0–100) for a DM to receive a reply |
+| `DM_DAILY_REPLY_LIMIT` | `10` | Maximum DM replies per day (protects Neynar credit budget) |
 
 ### Example: `character.json`
 
@@ -198,8 +232,68 @@ The script [`scripts/like_cycle.sh`](../../scripts/like_cycle.sh) sends a like t
 ```
 POST http://localhost:3000/{ARCHON_AGENT_ID}/message
 ```
+---
+
+## Usage — REPLY_DIRECT_CAST
+
+The REPLY_DIRECT_CAST action is triggered by messaging the agent:
+
+```
+Process pending direct casts. Use the REPLY_DIRECT_CAST action to fetch, filter, score, and reply to incoming Direct Cast messages.
+```
+
+The action fetches pending DMs, applies spam filtering, scores senders, and generates replies:
+
+```
+[DIRECT_CAST] ===== Direct Cast processing cycle #1 starting =====
+[DIRECT_CAST] Archon FID: 3315139
+[DIRECT_CAST] DM config: minFollowers=50, minFollowersPower=200, maxPerSender=3, maxPerCycle=3, minScore=30, dailyLimit=10
+[DIRECT_CAST] Fetching notifications for FID 3315139...
+[DIRECT_CAST] Received 5 notifications, including 2 direct_cast type
+[DIRECT_CAST] Filtered to 2 pending DMs after dedup
+[DIRECT_CAST] Checking spam for DM from @user1 (fid: 12345, followers: 850, power_badge: true)
+[DIRECT_CAST]   → Past interactions found: 2 messages in history
+[DIRECT_CAST]   → Knowledge relevance score: 0.65 (scaled: 19.5/30)
+[DIRECT_CAST]   → Priority score: 64.5/100
+[DIRECT_CAST] Checking spam for DM from @user2 (fid: 67890, followers: 12, power_badge: false)
+[DIRECT_CAST]   → SPAM: blocked by profile check (followers 12 < min 50)
+[DIRECT_CAST] Generating reply for @user1 (score 64.5/100)...
+[DIRECT_CAST] Reply sent to @user1 (fid: 12345) — messageId: 0xabc123
+[DIRECT_CAST] State saved: dailyReplyCount=1, dailyReplyDate=2026-06-01
+[DIRECT_CAST] ===== Direct Cast processing cycle #1 complete =====
+[DIRECT_CAST] Summary: 2 DMs received, 1 spam filtered, 1 replied, 0/1 pending (score below threshold)
+```
+
+### DM Priority Scoring (0–100)
+
+| Factor | Max Points | Description |
+|--------|:----------:|-------------|
+| Base score | 20 | Each DM starts at 20 |
+| Mutual follow | +15 | Sender follows Archon AND Archon follows sender back |
+| Power badge | +10 | Sender has Neynar power badge (verified human) |
+| Follower tier (1K+) | +5 | ≥ 1,000 followers |
+| Follower tier (10K+) | +10 | ≥ 10,000 followers |
+| Follower tier (50K+) | +15 | ≥ 50,000 followers |
+| Past interaction | +10 | Previous conversations exist in message history |
+| Knowledge relevance | 0–30 | Scaled from embedding cosine similarity (0.3+ sim → scaled) |
+
+**Threshold**: DMs scoring ≥ `DM_MIN_SCORE` (default: 30) receive a reply. DMs below threshold are logged as pending for manual review.
+
+The action is driven by a cron job on the host:
+
+```bash
+# Install on the host (run once):
+(crontab -l 2>/dev/null; echo "30 */6 * * * /root/agents-ecosystem/engine/scripts/dm_cycle.sh >> /var/log/dm_cycle.log 2>&1") | crontab -
+```
+
+The script [`scripts/dm_cycle.sh`](../../agents-ecosystem/engine/scripts/dm_cycle.sh) sends a DM processing trigger via `curl` to:
+
+```
+POST http://localhost:3000/{ARCHON_AGENT_ID}/message
+```
 
 ---
+
 
 
 ## Scoring Algorithm
@@ -284,6 +378,16 @@ Configure the target via `ARCHON_BASE_URL` and `ARCHON_AGENT_ID` runtime setting
 | POST | `/v2/farcaster/reaction` | Like a cast (signer-based). Request body: `{ "signer_uuid": "...", "reaction_type": "like", "target": "cast", "target_fid": FID, "target_hash": "0x..." }` |
 
 **Auth**: `api_key` header + `signer_uuid` in request body. Requires a Neynar plan with signer-based write access.
+
+### REPLY_DIRECT_CAST (Archon — read + write)
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/v2/farcaster/notifications?fid={FID}&limit=25` | Fetch pending Direct Casts (reuses Scout's Tier 3 call — 0 additional credits) |
+| GET | `/v2/farcaster/user/bulk?fids=FID` | Lookup sender profile (follower count, power badge) for spam checking |
+| POST | `/v2/farcaster/message` | Send a Direct Cast reply (signer-based). Request body: `{ "signer_uuid": "...", "recipient_fid": FID, "message": "..." }` |
+
+**Auth**: `api_key` header + `signer_uuid` for the message endpoint. Notifications and user lookup are read-only (api_key only). Sending DMs costs ~5 Neynar credits each.
 
 ---
 
@@ -393,13 +497,14 @@ pnpm install
 ```
 elizaos-plugin-neynar-search/
 ├── src/
-│   ├── index.ts                    # Plugin entry point — registers both SEARCH_FARCASTER and LIKE_FARCASTER
-│   ├── types.ts                    # NeynarCast, ScoredOpportunity, LikeConfig, LikeState, LikeCycleResult
+│   ├── index.ts                    # Plugin entry point — registers SEARCH_FARCASTER, LIKE_FARCASTER, and REPLY_DIRECT_CAST
+│   ├── types.ts                    # NeynarCast, ScoredOpportunity, DmConfig, DmPriorityState, LikeConfig, LikeState, LikeCycleResult
 │   ├── actions/
 │   │   ├── searchFarcaster.ts      # SEARCH_FARCASTER action (Scout: keyword search → score → deliver)
-│   │   └── likeFarcaster.ts        # LIKE_FARCASTER action (Archon: retrieve deliveries → resolve → batch-like)
+│   │   ├── likeFarcaster.ts        # LIKE_FARCASTER action (Archon: retrieve deliveries → resolve → batch-like)
+│   │   └── replyDirectCast.ts      # REPLY_DIRECT_CAST action (Archon: fetch DMs → filter spam → score → reply)
 │   └── lib/
-│       ├── neynarClient.ts         # Raw fetch HTTP wrappers (searchCasts, getUserCasts, lookupCast, likeCast, batchLikeCasts)
+│       ├── neynarClient.ts         # Raw fetch HTTP wrappers (searchCasts, getUserCasts, lookupCast, lookupUserByFid, likeCast, batchLikeCasts, sendDirectCast)
 │       ├── scorer.ts               # Three-axis scoring engine
 │       ├── likeState.ts            # Like state persistence (daily budget tracking, window reset, load/save)
 │       ├── cache.ts                # Search result cache with TTL

@@ -1,5 +1,8 @@
 // =============================================================================
-// neynarClient.ts — Read-only Neynar REST wrappers (raw fetch, no SDK)
+// neynarClient.ts — Neynar REST API wrappers (raw fetch, no SDK)
+//
+// Read operations: search, lookup, notifications
+// Write operations: likes, direct casts (DMs)
 //
 // Neynar API v2 base: https://api.neynar.com
 // Docs: https://docs.neynar.com/reference/search-casts
@@ -7,7 +10,7 @@
 // =============================================================================
 
 import { elizaLogger } from "@elizaos/core";
-import type { NeynarCast, NeynarSearchResponse, NeynarUserCastsResponse, NeynarNotification, NeynarNotificationsResponse } from "../types.js";
+import type { NeynarCast, NeynarAuthor, NeynarSearchResponse, NeynarUserCastsResponse, NeynarNotification, NeynarNotificationsResponse } from "../types.js";
 
 const NEYNAR_BASE = "https://api.neynar.com";
 
@@ -245,7 +248,82 @@ export async function lookupUserByHandle(
 }
 
 /**
- * Fetch recent notifications (replies, mentions, recasts) for a given FID.
+ * Look up a Farcaster user by their FID (numeric ID).
+ *
+ * GET /v2/farcaster/user/bulk?fids=FID
+ * Returns user profile with follower count, power badge, etc.
+ * ~5 credits per call (estimated, shared with other bulk lookups).
+ */
+export async function lookupUserByFid(
+  apiKey: string,
+  fid: number
+): Promise<NeynarAuthor | null> {
+  const url = new URL(`${NEYNAR_BASE}/v2/farcaster/user/bulk`);
+  url.searchParams.set("fids", String(fid));
+
+  try {
+    const res = await fetch(url.toString(), {
+      method: "GET",
+      headers: neynarHeaders(apiKey),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      if (res.status === 402) {
+        elizaLogger.info(
+          `[DIRECT_CAST] lookupUserByFid fid=${fid}: 402 — endpoint not available on current plan`
+        );
+      } else {
+        elizaLogger.warn(
+          `[DIRECT_CAST] lookupUserByFid FAILED for fid=${fid}: ${res.status} ${res.statusText}`
+        );
+      }
+      return null;
+    }
+
+    const data = (await res.json()) as {
+      users?: Array<{
+        fid: number;
+        username: string;
+        display_name?: string;
+        follower_count: number;
+        following_count?: number;
+        power_badge?: boolean;
+        profile?: { bio?: { text?: string } };
+      }>;
+    };
+
+    if (!data?.users?.length) {
+      elizaLogger.warn(
+        `[DIRECT_CAST] lookupUserByFid fid=${fid}: user not found`
+      );
+      return null;
+    }
+
+    const u = data.users[0];
+    elizaLogger.info(
+      `[DIRECT_CAST] lookupUserByFid fid=${fid} → @${u.username} (${u.follower_count.toLocaleString()} followers, power=${!!u.power_badge})`
+    );
+
+    return {
+      fid: u.fid,
+      username: u.username,
+      display_name: u.display_name,
+      follower_count: u.follower_count,
+      following_count: u.following_count,
+      power_badge: u.power_badge,
+      profile: u.profile,
+    };
+  } catch (err) {
+    elizaLogger.warn(
+      `[DIRECT_CAST] lookupUserByFid ERROR for fid=${fid}: ${err}`
+    );
+    return null;
+  }
+}
+
+/**
+ * Fetch recent notifications (replies, mentions, recasts, direct casts) for a given FID.
  *
  * GET /v2/farcaster/notifications?fid={fid}&limit={limit}
  * ~148 credits per call.
@@ -289,16 +367,18 @@ export async function getNotifications(
     }
 
     // Convert raw notifications to our NeynarNotification type
+    // Includes direct_cast type for DM reception (2026-06-01: ISSUE #9)
     const notifications: NeynarNotification[] = data.notifications
-      .filter((n: any) => ["reply", "recast", "mention"].includes(n.type))
+      .filter((n: any) => ["reply", "recast", "mention", "direct_cast"].includes(n.type))
       .map((n: any) => ({
-        type: n.type as "reply" | "recast" | "mention",
+        type: n.type as "reply" | "recast" | "mention" | "direct_cast",
         cast: n.cast as NeynarCast,
         parent_cast: n.parent_cast as NeynarCast | undefined,
       }));
 
+    const dmCount = notifications.filter((n) => n.type === "direct_cast").length;
     elizaLogger.info(
-      `[NeynarDebug] getNotifications: ${notifications.length} actionable notifications for FID ${fid}`
+      `[NeynarDebug] getNotifications: ${notifications.length} actionable (${dmCount} DMs) for FID ${fid}`
     );
 
     return notifications;
@@ -360,8 +440,76 @@ export async function searchAllKeywords(
 }
 
 // =============================================================================
-// Write operations — LIKE / REACTION endpoints
+// Write operations — LIKE / REACTION / DIRECT CAST endpoints
 // =============================================================================
+
+/**
+ * Send a Direct Cast (DM) reply to a Farcaster user.
+ *
+ * POST /v2/farcaster/message
+ * Body: { signer_uuid, recipient_fid, message }
+ * ~5 credits per call (estimated).
+ *
+ * Returns the messageId on success, null on failure.
+ */
+export async function sendDirectCast(
+  apiKey: string,
+  signerUuid: string,
+  recipientFid: number,
+  message: string
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  const url = `${NEYNAR_BASE}/v2/farcaster/message`;
+  const startTime = Date.now();
+
+  elizaLogger.info(
+    `[DIRECT_CAST] sendDirectCast → fid=${recipientFid} — POST /v2/farcaster/message`
+  );
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "api_key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        signer_uuid: signerUuid,
+        recipient_fid: recipientFid,
+        message,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    const duration = Date.now() - startTime;
+
+    if (res.ok) {
+      const data = await res.json();
+      const messageId = data?.result?.message?.hash || data?.message?.hash || "unknown";
+      elizaLogger.success(
+        `[DIRECT_CAST] sendDirectCast SUCCESS → fid=${recipientFid} — msgId=${messageId} (${duration}ms, ~5 credits)`
+      );
+      return { success: true, messageId };
+    }
+
+    if (res.status === 429) {
+      elizaLogger.warn(
+        `[DIRECT_CAST] sendDirectCast RATE-LIMITED → fid=${recipientFid} (${duration}ms) — will retry next cycle`
+      );
+      return { success: false, error: "rate_limited" };
+    }
+
+    elizaLogger.warn(
+      `[DIRECT_CAST] sendDirectCast FAILED → fid=${recipientFid}: ${res.status} ${res.statusText} (${duration}ms)`
+    );
+    return { success: false, error: `${res.status} ${res.statusText}` };
+  } catch (err: any) {
+    const duration = Date.now() - startTime;
+    elizaLogger.warn(
+      `[DIRECT_CAST] sendDirectCast ERROR → fid=${recipientFid}: ${err.message} (${duration}ms)`
+    );
+    return { success: false, error: err.message };
+  }
+}
 
 /**
  * Like a single Farcaster cast by its hash.

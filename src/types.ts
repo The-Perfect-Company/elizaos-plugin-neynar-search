@@ -113,9 +113,9 @@ export interface MonitoredProfile {
 
 /** A single notification from Neynar's notifications endpoint */
 export interface NeynarNotification {
-  type: "reply" | "recast" | "like" | "follow" | "mention";
+  type: "reply" | "recast" | "like" | "follow" | "mention" | "direct_cast";
   cast: NeynarCast;
-  parent_cast?: NeynarCast; // only for replies
+  parent_cast?: NeynarCast; // only for replies / direct_casts
 }
 
 /** Response envelope from GET /v2/farcaster/notifications */
@@ -125,6 +125,62 @@ export interface NeynarNotificationsResponse {
     cast: any;
     parent_cast?: any;
   }[];
+}
+
+// =============================================================================
+// Direct Cast types
+// =============================================================================
+
+/** Represents a Direct Cast (DM) notification from Neynar's notifications API */
+export interface DirectCastNotification {
+  type: "direct_cast";
+  cast: NeynarCast;           // The DM message cast object
+  sender?: NeynarAuthor;       // Sender profile (nested in cast.author)
+  received_at: string;         // ISO timestamp
+}
+
+/** Configuration for the REPLY_DIRECT_CAST action */
+export interface DmConfig {
+  /** Neynar API key (required) */
+  apiKey: string;
+  /** Neynar signer UUID (required for sending replies) */
+  signerUuid: string;
+  /** Farcaster ID of this agent (Archon) */
+  archonFid: number;
+  /** Minimum follower count for a sender to not be considered spam (default: 50) */
+  spamMinFollowers: number;
+  /** Minimum follower count for senders without power badge (default: 200) */
+  spamMinFollowersPower: number;
+  /** Max DMs per sender in 24h before rate-limiting (default: 3) */
+  maxDmsPerSender: number;
+  /** Maximum DMs to process per cycle (default: 3) */
+  maxDmsPerCycle: number;
+  /** Minimum priority score for a DM to get a reply (default: 30) */
+  minScoreForReply: number;
+  /** Maximum DM replies per 24h rolling window (default: 10) */
+  dailyReplyLimit: number;
+}
+
+/** Persisted state tracking DM priority across cycles */
+export interface DmPriorityState {
+  /** ISO timestamp of last DM fetch */
+  lastFetchTimestamp: string;
+  /** Set of processed DM cast hashes (dedup, max 200) */
+  processedDmHashes: string[];
+  /** Set of replied DM cast hashes (max 200) */
+  sentReplyHashes: string[];
+  /** Rolling daily reply counter */
+  dailyReplyCount: number;
+  /** Date string (YYYY-MM-DD) for daily counter reset */
+  dailyReplyDate: string;
+  /** DMs still awaiting reply, sorted by score descending */
+  pendingReplies: Array<{
+    dmHash: string;
+    senderFid: number;
+    senderHandle: string;
+    dmText: string;
+    score: number;
+  }>;
 }
 
 // =============================================================================
