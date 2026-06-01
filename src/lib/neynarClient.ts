@@ -160,11 +160,15 @@ export async function getUserCasts(
  */
 export async function lookupCast(
   apiKey: string,
-  hash: string
+  identifier: string
 ): Promise<NeynarCast | null> {
   const url = new URL(`${NEYNAR_BASE}/v2/farcaster/cast`);
-  url.searchParams.set("hash", hash);
-  url.searchParams.set("type", "hash");
+
+  // Auto-detect: if it looks like a URL (Warpcast link), use type=url
+  // Otherwise, use type=hash (requires full 64-char hex hash)
+  const isUrl = identifier.startsWith("http://") || identifier.startsWith("https://");
+  url.searchParams.set("identifier", identifier);
+  url.searchParams.set("type", isUrl ? "url" : "hash");
 
   try {
     const res = await fetch(url.toString(), {
@@ -174,14 +178,14 @@ export async function lookupCast(
     });
 
     if (!res.ok) {
-      console.warn(`[neynar] lookupCast failed for hash=${hash}: ${res.status} ${res.statusText}`);
+      console.warn(`[neynar] lookupCast failed for identifier=${identifier}: ${res.status} ${res.statusText}`);
       return null;
     }
 
     const data = (await res.json()) as { cast?: NeynarCast };
     return data?.cast ?? null;
   } catch (err) {
-    console.warn(`[neynar] lookupCast error for hash=${hash}:`, err);
+    console.warn(`[neynar] lookupCast error for identifier=${identifier}:`, err);
     return null;
   }
 }

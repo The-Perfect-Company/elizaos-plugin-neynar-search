@@ -178,32 +178,32 @@ function extractShortHash(url: string): string | null {
  */
 async function resolveShortHashes(
   apiKey: string,
-  shortHashes: string[]
+  castUrls: string[]
 ): Promise<Map<string, { fullHash: string; fid: number; handle: string }>> {
   const result = new Map<string, { fullHash: string; fid: number; handle: string }>();
-  const unique = [...new Set(shortHashes)];
+  const unique = [...new Set(castUrls)];
 
   elizaLogger.info(
-    `[LIKE] Resolving ${unique.length} unique short hashes via lookupCast (~${unique.length * 5} credits)`
+    `[LIKE] Resolving ${unique.length} unique cast URLs via lookupCast (type=url)`
   );
 
-  for (const shortHash of unique) {
+  for (const castUrl of unique) {
     try {
-      const cast = await lookupCast(apiKey, shortHash);
+      const cast = await lookupCast(apiKey, castUrl);
       if (cast && cast.hash) {
-        result.set(shortHash, {
+        result.set(castUrl, {
           fullHash: cast.hash,
           fid: cast.author.fid,
           handle: cast.author.username ?? `fid_${cast.author.fid}`,
         });
         elizaLogger.debug(
-          `[LIKE] Resolved ${shortHash} → ${cast.hash.slice(0, 14)}... (by @${cast.author.username ?? "unknown"}, fid=${cast.author.fid})`
+          `[LIKE] Resolved ${castUrl.slice(-10)} → ${cast.hash.slice(0, 14)}... (by @${cast.author.username ?? "unknown"}, fid=${cast.author.fid})`
         );
       } else {
-        elizaLogger.warn(`[LIKE] Could not resolve short hash: ${shortHash} — cast not found`);
+        elizaLogger.warn(`[LIKE] Could not resolve cast URL: ${castUrl} — cast not found`);
       }
     } catch (err) {
-      elizaLogger.warn(`[LIKE] Error resolving hash ${shortHash}: ${String(err)}`);
+      elizaLogger.warn(`[LIKE] Error resolving URL ${castUrl}: ${String(err)}`);
     }
   }
 
@@ -429,18 +429,13 @@ export const likeFarcasterAction: Action = {
       let authorFids: number[] = [];
 
       if (castUrls.length > 0) {
-        const shortHashes = castUrls
-          .map((url) => extractShortHash(url))
-          .filter((h): h is string => h !== null);
+        // Pass full Warpcast URLs — lookupCast auto-detects and uses type=url
+        const hashMap = await resolveShortHashes(config.apiKey, castUrls);
 
-        if (shortHashes.length > 0) {
-          const hashMap = await resolveShortHashes(config.apiKey, shortHashes);
-
-          // Build arrays from resolved data
-          for (const [, info] of hashMap) {
-            scoutFullHashes.push(info.fullHash);
-            authorFids.push(info.fid);
-          }
+        // Build arrays from resolved data
+        for (const [, info] of hashMap) {
+          scoutFullHashes.push(info.fullHash);
+          authorFids.push(info.fid);
         }
       }
 
