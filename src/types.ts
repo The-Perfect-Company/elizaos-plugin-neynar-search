@@ -229,3 +229,62 @@ export interface LikeCycleResult {
   dailyBudgetRemaining: number;
   batchBudgetUsed: number;
 }
+
+// =============================================================================
+// Follow/Unfollow action types
+// =============================================================================
+
+/** Configuration for the FOLLOW_FARCASTER action */
+export interface FollowConfig {
+  /** Neynar API key (required) */
+  apiKey: string;
+  /** Neynar signer UUID (required for write operations) */
+  signerUuid: string;
+  /** Maximum follows per cycle (default: 5) */
+  maxFollowsPerCycle: number;
+  /** Minimum follower count to not be considered spam (default: 10) */
+  spamMinFollowers: number;
+}
+
+/** Persisted state shared between FOLLOW_FARCASTER and UNFOLLOW_FARCASTER */
+export interface FollowState {
+  /** FIDs Archon is currently following */
+  followedFids: number[];
+  /** FID → ISO timestamp when followed */
+  followedAt: Record<number, string>;
+  /** Cursor for staggered pagination (null = start from page 1) */
+  followerCursor: string | null;
+  /** Count of FIDs checked in current staggered pass (for logging) */
+  followerPageChecked: number;
+  /** ISO timestamp of last follow cycle */
+  lastFollowCycle: string | null;
+  /** ISO timestamp of last unfollow cycle */
+  lastUnfollowCycle: string | null;
+  /** Total FOLLOW_FARCASTER cycles run */
+  followCycleCount: number;
+  /** Total UNFOLLOW_FARCASTER cycles run */
+  unfollowCycleCount: number;
+  /** Total follow API calls that succeeded */
+  totalFollowsExecuted: number;
+  /** Total unfollow API calls that succeeded */
+  totalUnfollowsExecuted: number;
+}
+
+/** Result of a single FOLLOW_FARCASTER cycle */
+export interface FollowCycleResult {
+  followed: number;
+  attempted: number;
+  skipped: number;
+  alreadyFollowed: number;
+  spamFiltered: number;
+  errors: string[];
+}
+
+/** Result of a single UNFOLLOW_FARCASTER cycle */
+export interface UnfollowCycleResult {
+  unfollowed: number;
+  pageSize: number;
+  pageRemaining: boolean;
+  checkedFids: number;
+  errors: string[];
+}

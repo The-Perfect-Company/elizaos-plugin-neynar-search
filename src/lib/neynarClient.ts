@@ -367,18 +367,20 @@ export async function getNotifications(
     }
 
     // Convert raw notifications to our NeynarNotification type
-    // Includes direct_cast type for DM reception (2026-06-01: ISSUE #9)
+    // Includes direct_cast + follow types (2026-06-01: follow-back detection)
     const notifications: NeynarNotification[] = data.notifications
-      .filter((n: any) => ["reply", "recast", "mention", "direct_cast"].includes(n.type))
+      .filter((n: any) => ["reply", "recast", "mention", "direct_cast", "follow"].includes(n.type))
       .map((n: any) => ({
-        type: n.type as "reply" | "recast" | "mention" | "direct_cast",
+        type: n.type as "reply" | "recast" | "mention" | "direct_cast" | "follow",
         cast: n.cast as NeynarCast,
         parent_cast: n.parent_cast as NeynarCast | undefined,
       }));
 
     const dmCount = notifications.filter((n) => n.type === "direct_cast").length;
+    const followCount = notifications.filter((n) => n.type === "follow").length;
     elizaLogger.info(
-      `[NeynarDebug] getNotifications: ${notifications.length} actionable (${dmCount} DMs) for FID ${fid}`
+      `[NeynarDebug] getNotifications: ${notifications.length} actionable ` +
+      `(${dmCount} DMs, ${followCount} follows) for FID ${fid}`
     );
 
     return notifications;
@@ -663,4 +665,208 @@ export async function batchLikeCasts(
   );
 
   return { liked, failed, likedHashes };
+}
+
+// =============================================================================
+// Follow / Unfollow API wrappers
+// =============================================================================
+
+/**
+ * Follow one or more Farcaster users by their FIDs.
+ *
+ * POST /v2/farcaster/follows
+ * Body: { signer_uuid, target_fids: [FID1, FID2, ...] }
+ * ~5 credits per call (estimated).
+ *
+ * Returns a summary with successfully followed FIDs and any errors.
+ */
+export async function followUsers(
+  apiKey: string,
+  signerUuid: string,
+  targetFids: number[]
+): Promise<{ success: boolean; followed: number[]; errors: { fid: number; reason: string }[] }> {
+  const url = `${NEYNAR_BASE}/v2/farcaster/follows`;
+  const startTime = Date.now();
+
+  elizaLogger.info(
+    `[NeynarDebug] followUsers: POST /v2/farcaster/follows — targetFids=[${targetFids.join(", ")}]`
+  );
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "api_key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        signer_uuid: signerUuid,
+        target_fids: targetFids,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    const duration = Date.now() - startTime;
+
+    if (res.ok) {
+      elizaLogger.success(
+        `[NeynarDebug] followUsers SUCCESS — followed ${targetFids.length} users (${duration}ms, ~5 credits)`
+      );
+      return { success: true, followed: [...targetFids], errors: [] };
+    }
+
+    if (res.status === 429) {
+      elizaLogger.warn(
+        `[NeynarDebug] followUsers RATE-LIMITED — ${duration}ms — will retry next cycle`
+      );
+      return { success: false, followed: [], errors: targetFids.map(fid => ({ fid, reason: "rate_limited" })) };
+    }
+
+    elizaLogger.warn(
+      `[NeynarDebug] followUsers FAILED — ${res.status} ${res.statusText} (${duration}ms)`
+    );
+    return { success: false, followed: [], errors: targetFids.map(fid => ({ fid, reason: `${res.status} ${res.statusText}` })) };
+  } catch (err: any) {
+    const duration = Date.now() - startTime;
+    elizaLogger.warn(
+      `[NeynarDebug] followUsers ERROR — ${err.message} (${duration}ms)`
+    );
+    return { success: false, followed: [], errors: targetFids.map(fid => ({ fid, reason: err.message })) };
+  }
+}
+
+/**
+ * Unfollow one or more Farcaster users by their FIDs.
+ *
+ * DELETE /v2/farcaster/follows
+ * Body: { signer_uuid, target_fids: [FID1, FID2, ...] }
+ * ~5 credits per call (estimated).
+ *
+ * Returns a summary with successfully unfollowed FIDs and any errors.
+ */
+export async function unfollowUsers(
+  apiKey: string,
+  signerUuid: string,
+  targetFids: number[]
+): Promise<{ success: boolean; unfollowed: number[]; errors: { fid: number; reason: string }[] }> {
+  const url = `${NEYNAR_BASE}/v2/farcaster/follows`;
+  const startTime = Date.now();
+
+  elizaLogger.info(
+    `[NeynarDebug] unfollowUsers: DELETE /v2/farcaster/follows — targetFids=[${targetFids.join(", ")}]`
+  );
+
+  try {
+    const res = await fetch(url, {
+      method: "DELETE",
+      headers: {
+        "api_key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        signer_uuid: signerUuid,
+        target_fids: targetFids,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    const duration = Date.now() - startTime;
+
+    if (res.ok) {
+      elizaLogger.success(
+        `[NeynarDebug] unfollowUsers SUCCESS — unfollowed ${targetFids.length} users (${duration}ms, ~5 credits)`
+      );
+      return { success: true, unfollowed: [...targetFids], errors: [] };
+    }
+
+    if (res.status === 429) {
+      elizaLogger.warn(
+        `[NeynarDebug] unfollowUsers RATE-LIMITED — ${duration}ms — will retry next cycle`
+      );
+      return { success: false, unfollowed: [], errors: targetFids.map(fid => ({ fid, reason: "rate_limited" })) };
+    }
+
+    elizaLogger.warn(
+      `[NeynarDebug] unfollowUsers FAILED — ${res.status} ${res.statusText} (${duration}ms)`
+    );
+    return { success: false, unfollowed: [], errors: targetFids.map(fid => ({ fid, reason: `${res.status} ${res.statusText}` })) };
+  } catch (err: any) {
+    const duration = Date.now() - startTime;
+    elizaLogger.warn(
+      `[NeynarDebug] unfollowUsers ERROR — ${err.message} (${duration}ms)`
+    );
+    return { success: false, unfollowed: [], errors: targetFids.map(fid => ({ fid, reason: err.message })) };
+  }
+}
+
+/**
+ * Get one page of followers for a given FID (staggered pagination).
+ *
+ * GET /v2/farcaster/followers?fid={fid}&limit={limit}
+ * Optionally pass a cursor for pagination.
+ * ~5 credits per call (estimated).
+ *
+ * Returns the follower FIDs from this page and the next cursor (null if last page).
+ */
+export async function getFollowersPage(
+  apiKey: string,
+  fid: number,
+  limit: number = 150,
+  cursor?: string | null
+): Promise<{ fids: number[]; nextCursor: string | null }> {
+  const url = new URL(`${NEYNAR_BASE}/v2/farcaster/followers`);
+  url.searchParams.set("fid", String(fid));
+  url.searchParams.set("limit", String(limit));
+  if (cursor) {
+    url.searchParams.set("cursor", cursor);
+  }
+
+  const startTime = Date.now();
+
+  elizaLogger.info(
+    `[NeynarDebug] getFollowersPage: fid=${fid} limit=${limit} cursor=${cursor || "null"}`
+  );
+
+  try {
+    const res = await fetch(url.toString(), {
+      method: "GET",
+      headers: neynarHeaders(apiKey),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    const duration = Date.now() - startTime;
+
+    if (!res.ok) {
+      if (res.status === 402) {
+        elizaLogger.info(
+          `[NeynarDebug] getFollowersPage: 402 — endpoint not available on current plan`
+        );
+      } else {
+        elizaLogger.warn(
+          `[NeynarDebug] getFollowersPage FAILED for fid=${fid}: ${res.status} ${res.statusText} (${duration}ms)`
+        );
+      }
+      return { fids: [], nextCursor: null };
+    }
+
+    const data = (await res.json()) as {
+      users?: Array<{ fid: number }>;
+      next?: { cursor?: string };
+    };
+
+    const fids = (data?.users || []).map((u: any) => u.fid || u.user?.fid).filter(Boolean);
+    const nextCursor = data?.next?.cursor || null;
+
+    elizaLogger.info(
+      `[NeynarDebug] getFollowersPage: ${fids.length} FIDs, hasMore=${nextCursor !== null} (${duration}ms, ~5 credits)`
+    );
+
+    return { fids, nextCursor };
+  } catch (err: any) {
+    const duration = Date.now() - startTime;
+    elizaLogger.warn(
+      `[NeynarDebug] getFollowersPage ERROR for fid=${fid}: ${err.message} (${duration}ms)`
+    );
+    return { fids: [], nextCursor: null };
+  }
 }

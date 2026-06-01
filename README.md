@@ -283,7 +283,7 @@ The action is driven by a cron job on the host:
 
 ```bash
 # Install on the host (run once):
-(crontab -l 2>/dev/null; echo "30 */6 * * * /root/agents-ecosystem/engine/scripts/dm_cycle.sh >> /var/log/dm_cycle.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "30 1,9,17 * * * /root/agents-ecosystem/engine/scripts/dm_cycle.sh >> /var/log/dm_cycle.log 2>&1") | crontab -
 ```
 
 The script [`scripts/dm_cycle.sh`](../../agents-ecosystem/engine/scripts/dm_cycle.sh) sends a DM processing trigger via `curl` to:
