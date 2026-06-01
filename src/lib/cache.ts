@@ -8,7 +8,7 @@ import { elizaLogger } from "@elizaos/core";
 import type { NeynarCast } from "../types.js";
 
 const CACHE_DIR = path.resolve(process.cwd(), ".neynar-cache");
-const CACHE_TTL_MS = 6.5 * 60 * 60 * 1000; // 6.5 hours (slightly > 6h cycle)
+const CACHE_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours (> 6h cycle — gives 2h buffer against timing drift)
 
 interface CacheEntry {
   timestamp: number;  // epoch ms
