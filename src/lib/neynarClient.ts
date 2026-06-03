@@ -58,7 +58,7 @@ export async function searchCasts(
 
     if (res.status === 429) {
       elizaLogger.warn(
-        `[NEYNADEBUG] searchCasts rate-limited for "${query}" — backing off 2s`
+        `[NEYNAR-DEBUG] searchCasts rate-limited for "${query}" — backing off 2s`
       );
       // Rate-limited — back off 2s and retry once
       await sleep(2000);
@@ -69,21 +69,21 @@ export async function searchCasts(
       });
       if (!retry.ok) {
         elizaLogger.warn(
-          `[NEYNADEBUG] searchCasts retry FAILED for "${query}": ${retry.status} after ${Date.now() - startTime}ms`
+          `[NEYNAR-DEBUG] searchCasts retry FAILED for "${query}": ${retry.status} after ${Date.now() - startTime}ms`
         );
         return [];
       }
       const data = (await retry.json()) as NeynarSearchResponse;
       const count = data?.result?.casts?.length ?? 0;
       elizaLogger.info(
-        `[NEYNADEBUG] searchCasts "${query}" — ${count} casts, ${Date.now() - startTime}ms, ~${estimatedCost} credits (retry)`
+        `[NEYNAR-DEBUG] searchCasts "${query}" — ${count} casts, ${Date.now() - startTime}ms, ~${estimatedCost} credits (retry)`
       );
       return data?.result?.casts ?? [];
     }
 
     if (!res.ok) {
       elizaLogger.warn(
-        `[NEYNADEBUG] searchCasts FAILED for "${query}": ${res.status} ${res.statusText} after ${duration}ms`
+        `[NEYNAR-DEBUG] searchCasts FAILED for "${query}": ${res.status} ${res.statusText} after ${duration}ms`
       );
       return [];
     }
@@ -91,14 +91,14 @@ export async function searchCasts(
     const data = (await res.json()) as NeynarSearchResponse;
     const count = data?.result?.casts?.length ?? 0;
     elizaLogger.info(
-      `[NEYNADEBUG] searchCasts "${query}" — ${count} casts, ${duration}ms, ~${estimatedCost} credits`
+      `[NEYNAR-DEBUG] searchCasts "${query}" — ${count} casts, ${duration}ms, ~${estimatedCost} credits`
     );
 
     return data?.result?.casts ?? [];
   } catch (err) {
     const duration = Date.now() - startTime;
     elizaLogger.warn(
-      `[NEYNADEBUG] searchCasts ERROR for "${query}": ${err} after ${duration}ms`
+      `[NEYNAR-DEBUG] searchCasts ERROR for "${query}": ${err} after ${duration}ms`
     );
     return [];
   }
@@ -133,7 +133,7 @@ export async function getUserCasts(
 
     if (!res.ok) {
       elizaLogger.warn(
-        `[NEYNADEBUG] getUserCasts FAILED for fid=${fid}: ${res.status} ${res.statusText} after ${duration}ms`
+        `[NEYNAR-DEBUG] getUserCasts FAILED for fid=${fid}: ${res.status} ${res.statusText} after ${duration}ms`
       );
       return [];
     }
@@ -141,14 +141,14 @@ export async function getUserCasts(
     const data = (await res.json()) as NeynarUserCastsResponse;
     const count = data?.casts?.length ?? 0;
     elizaLogger.info(
-      `[NEYNADEBUG] getUserCasts fid=${fid} — ${count} casts, ${duration}ms, ~38 credits`
+      `[NEYNAR-DEBUG] getUserCasts fid=${fid} — ${count} casts, ${duration}ms, ~38 credits`
     );
 
     return data?.casts ?? [];
   } catch (err) {
     const duration = Date.now() - startTime;
     elizaLogger.warn(
-      `[NEYNADEBUG] getUserCasts ERROR for fid=${fid}: ${err} after ${duration}ms`
+      `[NEYNAR-DEBUG] getUserCasts ERROR for fid=${fid}: ${err} after ${duration}ms`
     );
     return [];
   }
@@ -218,11 +218,11 @@ export async function lookupUserByHandle(
     if (!res.ok) {
       if (res.status === 402) {
         elizaLogger.info(
-          `[NEYNADEBUG] lookupUserByHandle "${handle}": 402 — endpoint not available on current plan`
+          `[NEYNAR-DEBUG] lookupUserByHandle "${handle}": 402 — endpoint not available on current plan`
         );
       } else {
         elizaLogger.warn(
-          `[NEYNADEBUG] lookupUserByHandle FAILED for "${handle}": ${res.status} ${res.statusText}`
+          `[NEYNAR-DEBUG] lookupUserByHandle FAILED for "${handle}": ${res.status} ${res.statusText}`
         );
       }
       return null;
@@ -235,13 +235,13 @@ export async function lookupUserByHandle(
 
     const { fid, username, follower_count } = data.user;
     elizaLogger.info(
-      `[NEYNADEBUG] lookupUserByHandle "${handle}" → fid=${fid} (${follower_count.toLocaleString()} followers)`
+      `[NEYNAR-DEBUG] lookupUserByHandle "${handle}" → fid=${fid} (${follower_count.toLocaleString()} followers)`
     );
 
     return { fid, username, followerCount: follower_count };
   } catch (err) {
     elizaLogger.warn(
-      `[NEYNADEBUG] lookupUserByHandle ERROR for "${handle}": ${err}`
+      `[NEYNAR-DEBUG] lookupUserByHandle ERROR for "${handle}": ${err}`
     );
     return null;
   }
@@ -347,11 +347,11 @@ export async function getNotifications(
     if (!res.ok) {
       if (res.status === 402) {
         elizaLogger.info(
-          `[NEYNADEBUG] getNotifications: 402 — endpoint not available on current plan`
+          `[NEYNAR-DEBUG] getNotifications: 402 — endpoint not available on current plan`
         );
       } else {
         elizaLogger.warn(
-          `[NEYNADEBUG] getNotifications FAILED: ${res.status} ${res.statusText}`
+          `[NEYNAR-DEBUG] getNotifications FAILED: ${res.status} ${res.statusText}`
         );
       }
       return [];
@@ -361,7 +361,7 @@ export async function getNotifications(
     
     if (!data?.notifications?.length) {
       elizaLogger.info(
-        `[NEYNADEBUG] getNotifications: No notifications for FID ${fid}`
+        `[NEYNAR-DEBUG] getNotifications: No notifications for FID ${fid}`
       );
       return [];
     }
@@ -379,14 +379,14 @@ export async function getNotifications(
     const dmCount = notifications.filter((n) => n.type === "direct_cast").length;
     const followCount = notifications.filter((n) => n.type === "follow").length;
     elizaLogger.info(
-      `[NEYNADEBUG] getNotifications: ${notifications.length} actionable ` +
+      `[NEYNAR-DEBUG] getNotifications: ${notifications.length} actionable ` +
       `(${dmCount} DMs, ${followCount} follows) for FID ${fid}`
     );
 
     return notifications;
   } catch (err) {
     elizaLogger.warn(
-      `[NEYNADEBUG] getNotifications ERROR: ${err}`
+      `[NEYNAR-DEBUG] getNotifications ERROR: ${err}`
     );
     return [];
   }
@@ -407,7 +407,7 @@ export async function searchAllKeywords(
   const totalStart = Date.now();
 
   elizaLogger.info(
-    `[NEYNADEBUG] searchAllKeywords START — ${keywords.length} keywords, limit=${limitPerKeyword}, concurrency=${concurrency}`
+    `[NEYNAR-DEBUG] searchAllKeywords START — ${keywords.length} keywords, limit=${limitPerKeyword}, concurrency=${concurrency}`
   );
 
   // Process keywords in chunks of `concurrency`
@@ -434,7 +434,7 @@ export async function searchAllKeywords(
   const totalEstimatedCredits = keywords.length * 149;
 
   elizaLogger.info(
-    `[NEYNADEBUG] searchAllKeywords COMPLETE — ${all.length} unique casts from ${keywords.length} keywords, ` +
+    `[NEYNAR-DEBUG] searchAllKeywords COMPLETE — ${all.length} unique casts from ${keywords.length} keywords, ` +
     `${totalDuration}ms total, ~${totalEstimatedCredits} credits consumed`
   );
 
@@ -689,7 +689,7 @@ export async function followUsers(
   const startTime = Date.now();
 
   elizaLogger.info(
-    `[NEYNADEBUG] followUsers: POST /v2/farcaster/follows — targetFids=[${targetFids.join(", ")}]`
+    `[NEYNAR-DEBUG] followUsers: POST /v2/farcaster/follows — targetFids=[${targetFids.join(", ")}]`
   );
 
   try {
@@ -710,26 +710,26 @@ export async function followUsers(
 
     if (res.ok) {
       elizaLogger.success(
-        `[NEYNADEBUG] followUsers SUCCESS — followed ${targetFids.length} users (${duration}ms, ~5 credits)`
+        `[NEYNAR-DEBUG] followUsers SUCCESS — followed ${targetFids.length} users (${duration}ms, ~5 credits)`
       );
       return { success: true, followed: [...targetFids], errors: [] };
     }
 
     if (res.status === 429) {
       elizaLogger.warn(
-        `[NEYNADEBUG] followUsers RATE-LIMITED — ${duration}ms — will retry next cycle`
+        `[NEYNAR-DEBUG] followUsers RATE-LIMITED — ${duration}ms — will retry next cycle`
       );
       return { success: false, followed: [], errors: targetFids.map(fid => ({ fid, reason: "rate_limited" })) };
     }
 
     elizaLogger.warn(
-      `[NEYNADEBUG] followUsers FAILED — ${res.status} ${res.statusText} (${duration}ms)`
+      `[NEYNAR-DEBUG] followUsers FAILED — ${res.status} ${res.statusText} (${duration}ms)`
     );
     return { success: false, followed: [], errors: targetFids.map(fid => ({ fid, reason: `${res.status} ${res.statusText}` })) };
   } catch (err: any) {
     const duration = Date.now() - startTime;
     elizaLogger.warn(
-      `[NEYNADEBUG] followUsers ERROR — ${err.message} (${duration}ms)`
+      `[NEYNAR-DEBUG] followUsers ERROR — ${err.message} (${duration}ms)`
     );
     return { success: false, followed: [], errors: targetFids.map(fid => ({ fid, reason: err.message })) };
   }
@@ -753,7 +753,7 @@ export async function unfollowUsers(
   const startTime = Date.now();
 
   elizaLogger.info(
-    `[NEYNADEBUG] unfollowUsers: DELETE /v2/farcaster/follows — targetFids=[${targetFids.join(", ")}]`
+    `[NEYNAR-DEBUG] unfollowUsers: DELETE /v2/farcaster/follows — targetFids=[${targetFids.join(", ")}]`
   );
 
   try {
@@ -774,26 +774,26 @@ export async function unfollowUsers(
 
     if (res.ok) {
       elizaLogger.success(
-        `[NEYNADEBUG] unfollowUsers SUCCESS — unfollowed ${targetFids.length} users (${duration}ms, ~5 credits)`
+        `[NEYNAR-DEBUG] unfollowUsers SUCCESS — unfollowed ${targetFids.length} users (${duration}ms, ~5 credits)`
       );
       return { success: true, unfollowed: [...targetFids], errors: [] };
     }
 
     if (res.status === 429) {
       elizaLogger.warn(
-        `[NEYNADEBUG] unfollowUsers RATE-LIMITED — ${duration}ms — will retry next cycle`
+        `[NEYNAR-DEBUG] unfollowUsers RATE-LIMITED — ${duration}ms — will retry next cycle`
       );
       return { success: false, unfollowed: [], errors: targetFids.map(fid => ({ fid, reason: "rate_limited" })) };
     }
 
     elizaLogger.warn(
-      `[NEYNADEBUG] unfollowUsers FAILED — ${res.status} ${res.statusText} (${duration}ms)`
+      `[NEYNAR-DEBUG] unfollowUsers FAILED — ${res.status} ${res.statusText} (${duration}ms)`
     );
     return { success: false, unfollowed: [], errors: targetFids.map(fid => ({ fid, reason: `${res.status} ${res.statusText}` })) };
   } catch (err: any) {
     const duration = Date.now() - startTime;
     elizaLogger.warn(
-      `[NEYNADEBUG] unfollowUsers ERROR — ${err.message} (${duration}ms)`
+      `[NEYNAR-DEBUG] unfollowUsers ERROR — ${err.message} (${duration}ms)`
     );
     return { success: false, unfollowed: [], errors: targetFids.map(fid => ({ fid, reason: err.message })) };
   }
@@ -824,7 +824,7 @@ export async function getFollowersPage(
   const startTime = Date.now();
 
   elizaLogger.info(
-    `[NEYNADEBUG] getFollowersPage: fid=${fid} limit=${limit} cursor=${cursor || "null"}`
+    `[NEYNAR-DEBUG] getFollowersPage: fid=${fid} limit=${limit} cursor=${cursor || "null"}`
   );
 
   try {
@@ -839,11 +839,11 @@ export async function getFollowersPage(
     if (!res.ok) {
       if (res.status === 402) {
         elizaLogger.info(
-          `[NEYNADEBUG] getFollowersPage: 402 — endpoint not available on current plan`
+          `[NEYNAR-DEBUG] getFollowersPage: 402 — endpoint not available on current plan`
         );
       } else {
         elizaLogger.warn(
-          `[NEYNADEBUG] getFollowersPage FAILED for fid=${fid}: ${res.status} ${res.statusText} (${duration}ms)`
+          `[NEYNAR-DEBUG] getFollowersPage FAILED for fid=${fid}: ${res.status} ${res.statusText} (${duration}ms)`
         );
       }
       return { fids: [], nextCursor: null };
@@ -858,14 +858,14 @@ export async function getFollowersPage(
     const nextCursor = data?.next?.cursor || null;
 
     elizaLogger.info(
-      `[NEYNADEBUG] getFollowersPage: ${fids.length} FIDs, hasMore=${nextCursor !== null} (${duration}ms, ~5 credits)`
+      `[NEYNAR-DEBUG] getFollowersPage: ${fids.length} FIDs, hasMore=${nextCursor !== null} (${duration}ms, ~5 credits)`
     );
 
     return { fids, nextCursor };
   } catch (err: any) {
     const duration = Date.now() - startTime;
     elizaLogger.warn(
-      `[NEYNADEBUG] getFollowersPage ERROR for fid=${fid}: ${err.message} (${duration}ms)`
+      `[NEYNAR-DEBUG] getFollowersPage ERROR for fid=${fid}: ${err.message} (${duration}ms)`
     );
     return { fids: [], nextCursor: null };
   }

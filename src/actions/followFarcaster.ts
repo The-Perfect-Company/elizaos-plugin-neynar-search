@@ -55,12 +55,12 @@ export const followFarcasterAction: Action = {
     const signerUuid = runtime.getSetting("FARCASTER_NEYNAR_SIGNER_UUID");
 
     elizaLogger.info(
-      `[NEYNADEBUG] FOLLOW_FARCASTER: validate — apiKey=${!!apiKey} signerUuid=${!!signerUuid}`
+      `[NEYNAR-DEBUG] FOLLOW_FARCASTER: validate — apiKey=${!!apiKey} signerUuid=${!!signerUuid}`
     );
 
     if (!apiKey || !signerUuid) {
       elizaLogger.warn(
-        "[NEYNADEBUG] FOLLOW_FARCASTER: missing required settings (FARCASTER_NEYNAR_API_KEY, FARCASTER_NEYNAR_SIGNER_UUID)"
+        "[NEYNAR-DEBUG] FOLLOW_FARCASTER: missing required settings (FARCASTER_NEYNAR_API_KEY, FARCASTER_NEYNAR_SIGNER_UUID)"
       );
       return false;
     }
@@ -74,7 +74,7 @@ export const followFarcasterAction: Action = {
     _state: State,
     callback: any
   ): Promise<void> => {
-    elizaLogger.info("[NEYNADEBUG] FOLLOW_FARCASTER: cycle started");
+    elizaLogger.info("[NEYNAR-DEBUG] FOLLOW_FARCASTER: cycle started");
 
     // -----------------------------------------------------------------------
     // Phase 1: Load config
@@ -89,7 +89,7 @@ export const followFarcasterAction: Action = {
     );
 
     elizaLogger.info(
-      `[NEYNADEBUG] FOLLOW_FARCASTER: config — maxFollows=${maxFollowsPerCycle} spamMinFollowers=${spamMinFollowers}`
+      `[NEYNAR-DEBUG] FOLLOW_FARCASTER: config — maxFollows=${maxFollowsPerCycle} spamMinFollowers=${spamMinFollowers}`
     );
 
     // -----------------------------------------------------------------------
@@ -98,7 +98,7 @@ export const followFarcasterAction: Action = {
     const followState: FollowState = loadFollowState();
 
     elizaLogger.info(
-      `[NEYNADEBUG] FOLLOW_FARCASTER: state loaded — ${followState.followedFids.length} currently followed, ` +
+      `[NEYNAR-DEBUG] FOLLOW_FARCASTER: state loaded — ${followState.followedFids.length} currently followed, ` +
       `cycle #${followState.followCycleCount}`
     );
 
@@ -110,7 +110,7 @@ export const followFarcasterAction: Action = {
     watchlistFids.forEach((e) => candidates.add(e.fid));
 
     elizaLogger.info(
-      `[NEYNADEBUG] FOLLOW_FARCASTER: ${watchlistFids.length} watchlist candidates`
+      `[NEYNAR-DEBUG] FOLLOW_FARCASTER: ${watchlistFids.length} watchlist candidates`
     );
 
     // -----------------------------------------------------------------------
@@ -127,7 +127,7 @@ export const followFarcasterAction: Action = {
     for (const fid of candidates) {
       if (toFollow.length >= maxFollowsPerCycle) {
         elizaLogger.info(
-          `[NEYNADEBUG] FOLLOW_FARCASTER: hit max follows (${maxFollowsPerCycle}), stopping candidate processing`
+          `[NEYNAR-DEBUG] FOLLOW_FARCASTER: hit max follows (${maxFollowsPerCycle}), stopping candidate processing`
         );
         break;
       }
@@ -142,7 +142,7 @@ export const followFarcasterAction: Action = {
       const user = await lookupUserByFid(apiKey, fid);
       if (!user) {
         elizaLogger.debug(
-          `[NEYNADEBUG] FOLLOW_FARCASTER: lookup failed for FID ${fid} — skipping`
+          `[NEYNAR-DEBUG] FOLLOW_FARCASTER: lookup failed for FID ${fid} — skipping`
         );
         continue;
       }
@@ -151,7 +151,7 @@ export const followFarcasterAction: Action = {
       if (user.follower_count < spamMinFollowers) {
         stats.lowFollowers++;
         elizaLogger.debug(
-          `[NEYNADEBUG] FOLLOW_FARCASTER: FID ${fid} @${user.username} ` +
+          `[NEYNAR-DEBUG] FOLLOW_FARCASTER: FID ${fid} @${user.username} ` +
           `has ${user.follower_count} followers (< ${spamMinFollowers}) — skipping`
         );
         continue;
@@ -161,19 +161,19 @@ export const followFarcasterAction: Action = {
       if (isSpamPattern(user.username, user.profile?.bio?.text)) {
         stats.spamFiltered++;
         elizaLogger.debug(
-          `[NEYNADEBUG] FOLLOW_FARCASTER: FID ${fid} @${user.username} matched spam pattern — skipping`
+          `[NEYNAR-DEBUG] FOLLOW_FARCASTER: FID ${fid} @${user.username} matched spam pattern — skipping`
         );
         continue;
       }
 
       toFollow.push(fid);
       elizaLogger.debug(
-        `[NEYNADEBUG] FOLLOW_FARCASTER: candidate accepted FID ${fid} @${user.username}`
+        `[NEYNAR-DEBUG] FOLLOW_FARCASTER: candidate accepted FID ${fid} @${user.username}`
       );
     }
 
     elizaLogger.info(
-      `[NEYNADEBUG] FOLLOW_FARCASTER: filtering complete — ` +
+      `[NEYNAR-DEBUG] FOLLOW_FARCASTER: filtering complete — ` +
       `${stats.alreadyFollowed} already followed, ` +
       `${stats.lowFollowers} low followers, ` +
       `${stats.spamFiltered} spam patterns, ` +
@@ -194,7 +194,7 @@ export const followFarcasterAction: Action = {
 
     if (toFollow.length > 0) {
       elizaLogger.info(
-        `[NEYNADEBUG] FOLLOW_FARCASTER: following ${toFollow.length} users: [${toFollow.join(", ")}]`
+        `[NEYNAR-DEBUG] FOLLOW_FARCASTER: following ${toFollow.length} users: [${toFollow.join(", ")}]`
       );
 
       const followResult = await followUsers(apiKey, signerUuid, toFollow);
@@ -203,18 +203,18 @@ export const followFarcasterAction: Action = {
         markFollowed(followState, followResult.followed);
         result.followed = followResult.followed.length;
         elizaLogger.info(
-          `[NEYNADEBUG] FOLLOW_FARCASTER: successfully followed ${followResult.followed.length} users`
+          `[NEYNAR-DEBUG] FOLLOW_FARCASTER: successfully followed ${followResult.followed.length} users`
         );
       }
 
       if (followResult.errors.length > 0) {
         result.errors = followResult.errors.map((e) => `FID ${e.fid}: ${e.reason}`);
         elizaLogger.warn(
-          `[NEYNADEBUG] FOLLOW_FARCASTER: ${followResult.errors.length} follow errors: ${result.errors.join("; ")}`
+          `[NEYNAR-DEBUG] FOLLOW_FARCASTER: ${followResult.errors.length} follow errors: ${result.errors.join("; ")}`
         );
       }
     } else {
-      elizaLogger.info("[NEYNADEBUG] FOLLOW_FARCASTER: no candidates to follow this cycle");
+      elizaLogger.info("[NEYNAR-DEBUG] FOLLOW_FARCASTER: no candidates to follow this cycle");
     }
 
     // -----------------------------------------------------------------------
@@ -225,7 +225,7 @@ export const followFarcasterAction: Action = {
     saveFollowState(followState);
 
     elizaLogger.info(
-      `[NEYNADEBUG] FOLLOW_FARCASTER: cycle #${followState.followCycleCount} complete — ` +
+      `[NEYNAR-DEBUG] FOLLOW_FARCASTER: cycle #${followState.followCycleCount} complete — ` +
       `followed=${result.followed} attempted=${result.attempted} ` +
       `skipped=${result.skipped} spamFiltered=${result.spamFiltered} ` +
       `errors=${result.errors.length}`

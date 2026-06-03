@@ -422,7 +422,7 @@ async function deliverToArchon(queueText: string, config: PluginConfig): Promise
   const url = `${config.archonUrl}/${config.archonAgentId}/ingest`;
 
   elizaLogger.info(
-    `[NEYNADEBUG] Attempting DirectClient delivery. Length: ${queueText.length} chars. ` +
+    `[NEYNAR-DEBUG] Attempting DirectClient delivery. Length: ${queueText.length} chars. ` +
     `Approximate tokens: ${Math.ceil(queueText.length / 4)}`
   );
 
@@ -454,19 +454,19 @@ async function deliverToArchon(queueText: string, config: PluginConfig): Promise
 
     if (res.status === 202 || res.status === 200) {
       elizaLogger.success(
-        `[NEYNADEBUG] DirectClient delivery accepted (${res.status}) in ${deliveryDuration}ms. ` +
+        `[NEYNAR-DEBUG] DirectClient delivery accepted (${res.status}) in ${deliveryDuration}ms. ` +
         `Opportunities: ${opportunityCount}, Priority: ${priorityCount}`
       );
     } else {
       elizaLogger.info(
-        `[NEYNADEBUG] DirectClient returned ${res.status} in ${deliveryDuration}ms. ` +
+        `[NEYNAR-DEBUG] DirectClient returned ${res.status} in ${deliveryDuration}ms. ` +
         `Using shared DB fallback (normal behavior).`
       );
     }
   } catch (err: any) {
     const deliveryDuration = Date.now() - deliveryStart;
     elizaLogger.info(
-      `[NEYNADEBUG] DirectClient unavailable (${err.message}) after ${deliveryDuration}ms. ` +
+      `[NEYNAR-DEBUG] DirectClient unavailable (${err.message}) after ${deliveryDuration}ms. ` +
       `Using shared DB fallback (normal behavior).`
     );
   }
@@ -647,14 +647,14 @@ async function runTier3(apiKey: string, config: PluginConfig): Promise<NeynarCas
   const fid = config.archonFarcasterFid;
   
   elizaLogger.info(
-    `[NEYNADEBUG] Tier 3: Checking inbound engagement for FID ${fid}...`
+    `[NEYNAR-DEBUG] Tier 3: Checking inbound engagement for FID ${fid}...`
   );
 
   try {
     const notifications = await getNotifications(apiKey, fid, 25);
 
     if (notifications.length === 0) {
-      elizaLogger.info("[NEYNADEBUG] Tier 3: No inbound engagement detected");
+      elizaLogger.info("[NEYNAR-DEBUG] Tier 3: No inbound engagement detected");
       return [];
     }
 
@@ -664,7 +664,7 @@ async function runTier3(apiKey: string, config: PluginConfig): Promise<NeynarCas
     const recasts = notifications.filter(n => n.type === "recast").length;
 
     elizaLogger.info(
-      `[NEYNADEBUG] Tier 3: ${replies} replies, ${mentions} mentions, ${recasts} recasts`
+      `[NEYNAR-DEBUG] Tier 3: ${replies} replies, ${mentions} mentions, ${recasts} recasts`
     );
 
     // Extract the engagement casts as NeynarCast[]
@@ -680,7 +680,7 @@ async function runTier3(apiKey: string, config: PluginConfig): Promise<NeynarCas
     return engagementCasts;
   } catch (err) {
     elizaLogger.warn(
-      `[NEYNADEBUG] Tier 3 ERROR: ${err}`
+      `[NEYNAR-DEBUG] Tier 3 ERROR: ${err}`
     );
     return [];
   }
