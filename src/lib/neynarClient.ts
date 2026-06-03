@@ -513,6 +513,112 @@ export async function sendDirectCast(
   }
 }
 
+// =============================================================================
+// Reply / Comment operations
+// =============================================================================
+
+/**
+ * Post a public reply (comment) on a Farcaster cast.
+ *
+ * POST /v2/farcaster/cast
+ * Body: { signer_uuid, text, parent: parentHash }
+ * ~25 credits per call (estimated, same as quote cast).
+ *
+ * Returns { success, castHash } on 2xx, or { success: false, error } on failure.
+ * On 429 (rate-limited), backs off 2s and retries once.
+ */
+export async function replyToCast(
+  apiKey: string,
+  signerUuid: string,
+  parentHash: string,
+  text: string
+): Promise<{ success: boolean; castHash?: string; error?: string }> {
+  const url = `${NEYNAR_BASE}/v2/farcaster/cast`;
+  const startTime = Date.now();
+
+  elizaLogger.info(
+    `[REPLY] replyToCast → parent=${parentHash.slice(0, 14)}... — POST /v2/farcaster/cast`
+  );
+  elizaLogger.debug(
+    `[REPLY] replyToCast text length=${text.length} chars, preview="${text.slice(0, 80)}..."`
+  );
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "api_key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        signer_uuid: signerUuid,
+        text,
+        parent: parentHash,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    const duration = Date.now() - startTime;
+
+    if (res.status === 429) {
+      elizaLogger.warn(
+        `[REPLY] replyToCast RATE-LIMITED parent=${parentHash.slice(0, 14)}... — backing off 2s for retry (${duration}ms)`
+      );
+      await sleep(2000);
+
+      const retry = await fetch(url, {
+        method: "POST",
+        headers: {
+          "api_key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          signer_uuid: signerUuid,
+          text,
+          parent: parentHash,
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      const retryDuration = Date.now() - startTime;
+
+      if (retry.ok) {
+        const retryData = await retry.json();
+        const castHash = retryData?.result?.cast?.hash || "unknown";
+        elizaLogger.success(
+          `[REPLY] replyToCast SUCCESS (retry) → parent=${parentHash.slice(0, 14)}... — castHash=${castHash} (${retryDuration}ms, ~25 credits)`
+        );
+        return { success: true, castHash };
+      }
+
+      elizaLogger.warn(
+        `[REPLY] replyToCast FAILED (retry) → parent=${parentHash.slice(0, 14)}...: ${retry.status} ${retry.statusText} (${retryDuration}ms)`
+      );
+      return { success: false, error: `${retry.status} ${retry.statusText}` };
+    }
+
+    if (res.ok) {
+      const data = await res.json();
+      const castHash = data?.result?.cast?.hash || "unknown";
+      elizaLogger.success(
+        `[REPLY] replyToCast SUCCESS → parent=${parentHash.slice(0, 14)}... — castHash=${castHash} (${duration}ms, ~25 credits)`
+      );
+      return { success: true, castHash };
+    }
+
+    elizaLogger.warn(
+      `[REPLY] replyToCast FAILED → parent=${parentHash.slice(0, 14)}...: ${res.status} ${res.statusText} (${duration}ms)`
+    );
+    return { success: false, error: `${res.status} ${res.statusText}` };
+  } catch (err: any) {
+    const duration = Date.now() - startTime;
+    elizaLogger.warn(
+      `[REPLY] replyToCast ERROR → parent=${parentHash.slice(0, 14)}...: ${err.message} (${duration}ms)`
+    );
+    return { success: false, error: err.message };
+  }
+}
+
 /**
  * Like a single Farcaster cast by its hash.
  *

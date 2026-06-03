@@ -173,7 +173,7 @@ All optional settings have sensible defaults. Override any of them via environme
 }
 ```
 
-> **Important:** Use only `"direct"` in the `clients` array. The `auto` client drives autonomous posting — a read-only discovery agent must not post anything. The `direct` client exposes the HTTP endpoint that `scout_cycle.sh` calls.
+> **Important:** Use only `"direct"` in the `clients` array. The `auto` client drives autonomous posting — a read-only discovery agent must not post anything. The `direct` client exposes the HTTP endpoint that `farcaster_scout_cycle.sh` calls.
 
 ### Example: `character.json` — Archon (publishing agent with signer)
 
@@ -286,10 +286,10 @@ The action is driven by a cron job on the host:
 
 ```bash
 # Install on the host (run once):
-(crontab -l 2>/dev/null; echo "0 */3 * * * /root/agents-ecosystem/engine/scripts/like_cycle.sh >> /root/agents-ecosystem/engine/logs/quotes/like_cycle.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "0 */3 * * * /root/agents-ecosystem/engine/scripts/farcaster_like_cycle.sh >> /root/agents-ecosystem/engine/logs/farcaster_like_cycle.log 2>&1") | crontab -
 ```
 
-The script [`scripts/like_cycle.sh`](../../scripts/like_cycle.sh) sends a like trigger via `curl` to:
+The script [`scripts/farcaster_like_cycle.sh`](../../scripts/farcaster_like_cycle.sh) sends a like trigger via `curl` to:
 
 ```
 POST http://localhost:3000/{ARCHON_AGENT_ID}/message
@@ -345,10 +345,10 @@ The action is driven by a cron job on the host:
 
 ```bash
 # Install on the host (run once):
-(crontab -l 2>/dev/null; echo "30 1,9,17 * * * /root/agents-ecosystem/engine/scripts/dm_cycle.sh >> /var/log/dm_cycle.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "30 1,9,17 * * * /root/agents-ecosystem/engine/scripts/farcaster_dm_cycle.sh >> /var/log/farcaster_dm_cycle.log 2>&1") | crontab -
 ```
 
-The script [`scripts/dm_cycle.sh`](../../agents-ecosystem/engine/scripts/dm_cycle.sh) sends a DM processing trigger via `curl` to:
+The script [`scripts/farcaster_dm_cycle.sh`](../../agents-ecosystem/engine/scripts/farcaster_dm_cycle.sh) sends a DM processing trigger via `curl` to:
 
 ```
 POST http://localhost:3000/{ARCHON_AGENT_ID}/message
@@ -392,10 +392,10 @@ The action is driven by a cron job on the host (every 12 hours):
 
 ```bash
 # Install on the host (run once):
-(crontab -l 2>/dev/null; echo "0 3,15 * * * /root/agents-ecosystem/engine/scripts/follow_cycle.sh >> /var/log/follow_cycle.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "0 3,15 * * * /root/agents-ecosystem/engine/scripts/farcaster_follow_cycle.sh >> /var/log/farcaster_follow_cycle.log 2>&1") | crontab -
 ```
 
-The script [`scripts/follow_cycle.sh`](../../agents-ecosystem/engine/scripts/follow_cycle.sh) sends a follow trigger via `curl` to:
+The script [`scripts/farcaster_follow_cycle.sh`](../../agents-ecosystem/engine/scripts/farcaster_follow_cycle.sh) sends a follow trigger via `curl` to:
 
 ```
 POST http://localhost:3000/{ARCHON_AGENT_ID}/message
@@ -436,10 +436,10 @@ The action is driven by a cron job on the host (weekly on Sunday):
 
 ```bash
 # Install on the host (run once):
-(crontab -l 2>/dev/null; echo "0 4 * * 0 /root/agents-ecosystem/engine/scripts/unfollow_cycle.sh >> /var/log/unfollow_cycle.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "0 4 * * 0 /root/agents-ecosystem/engine/scripts/farcaster_unfollow_cycle.sh >> /var/log/farcaster_unfollow_cycle.log 2>&1") | crontab -
 ```
 
-The script [`scripts/unfollow_cycle.sh`](../../agents-ecosystem/engine/scripts/unfollow_cycle.sh) sends an unfollow trigger via `curl` to:
+The script [`scripts/farcaster_unfollow_cycle.sh`](../../agents-ecosystem/engine/scripts/farcaster_unfollow_cycle.sh) sends an unfollow trigger via `curl` to:
 
 ```
 POST http://localhost:3000/{ARCHON_AGENT_ID}/message
@@ -572,10 +572,10 @@ The Scout agent is driven by a cron job on the host that calls its `DirectClient
 
 ```bash
 # Install on the host (run once):
-(crontab -l 2>/dev/null; echo "0 */3 * * * /root/agents-ecosystem/engine/scripts/scout_cycle.sh >> /var/log/scout_cycle.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "0 */3 * * * /root/agents-ecosystem/engine/scripts/farcaster_scout_cycle.sh >> /var/log/farcaster_scout_cycle.log 2>&1") | crontab -
 ```
 
-The script [`scripts/scout_cycle.sh`](../../scripts/scout_cycle.sh) sends a discovery prompt via `curl` to:
+The script [`scripts/farcaster_scout_cycle.sh`](../../scripts/farcaster_scout_cycle.sh) sends a discovery prompt via `curl` to:
 
 ```
 POST http://localhost:3003/{SCOUT_AGENT_ID}/message
@@ -589,10 +589,10 @@ The follow cycle runs twice daily via cron at staggered slots (03:00 and 15:00 U
 
 ```bash
 # Install on the host (run once):
-(crontab -l 2>/dev/null; echo "0 3,15 * * * /root/agents-ecosystem/engine/scripts/follow_cycle.sh >> /var/log/follow_cycle.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "0 3,15 * * * /root/agents-ecosystem/engine/scripts/farcaster_follow_cycle.sh >> /var/log/farcaster_follow_cycle.log 2>&1") | crontab -
 ```
 
-The script [`scripts/follow_cycle.sh`](../../agents-ecosystem/engine/scripts/follow_cycle.sh) sends a follow trigger via `curl` to:
+The script [`scripts/farcaster_follow_cycle.sh`](../../agents-ecosystem/engine/scripts/farcaster_follow_cycle.sh) sends a follow trigger via `curl` to:
 
 ```
 POST http://localhost:3000/{ARCHON_AGENT_ID}/message
@@ -606,10 +606,10 @@ The unfollow cycle runs once per week on Sunday at 04:00 UTC:
 
 ```bash
 # Install on the host (run once):
-(crontab -l 2>/dev/null; echo "0 4 * * 0 /root/agents-ecosystem/engine/scripts/unfollow_cycle.sh >> /var/log/unfollow_cycle.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "0 4 * * 0 /root/agents-ecosystem/engine/scripts/farcaster_unfollow_cycle.sh >> /var/log/farcaster_unfollow_cycle.log 2>&1") | crontab -
 ```
 
-The script [`scripts/unfollow_cycle.sh`](../../agents-ecosystem/engine/scripts/unfollow_cycle.sh) sends an unfollow trigger via `curl` to:
+The script [`scripts/farcaster_unfollow_cycle.sh`](../../agents-ecosystem/engine/scripts/farcaster_unfollow_cycle.sh) sends an unfollow trigger via `curl` to:
 
 ```
 POST http://localhost:3000/{ARCHON_AGENT_ID}/message

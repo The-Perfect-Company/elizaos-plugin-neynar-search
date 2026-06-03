@@ -315,3 +315,81 @@ export interface UnfollowCycleResult {
   checkedFids: number;
   errors: string[];
 }
+
+// =============================================================================
+// Reply action types (Issue #10)
+// =============================================================================
+
+/** Configuration for the REPLY_FARCASTER action */
+export interface ReplyConfig {
+  /** Neynar API key (required) */
+  apiKey: string;
+  /** Neynar signer UUID (required for posting replies) */
+  signerUuid: string;
+  /** Maximum public replies per 24h rolling window (default: 5 for beginner) */
+  maxDailyReplies: number;
+  /** Maximum replies to post per cycle (default: 2) */
+  maxPerCycle: number;
+  /** Minimum delay between reply API calls in ms (default: 3000) */
+  minDelayMs: number;
+  /** Maximum delay between reply API calls in ms (default: 8000) */
+  maxDelayMs: number;
+  /** Minimum Scout score threshold; items below are skipped (default: 0 = no filter) */
+  minScoreThreshold: number;
+  /** If true, also reply to [QUOTE_CANDIDATE] items (default: true) */
+  includeQuotedItems: boolean;
+  /** Path to the reply state file for persistence */
+  replyStatePath: string;
+  /** Path to the shared reply queue file (written by quote cycle) */
+  replyQueuePath: string;
+}
+
+/** A single cast that needs a reply, parsed from Scout delivery or shared queue */
+export interface ReplyTarget {
+  /** Full cast hash (0x-prefixed) */
+  castHash: string;
+  /** Full Warpcast URL */
+  castUrl: string;
+  /** Author's display handle (without @) */
+  authorHandle: string;
+  /** Author's Farcaster ID */
+  authorFid: number;
+  /** Preview of the original cast text (first ~200 chars) */
+  originalText: string;
+  /** The suggested reply angle from Scout, or "n/a" if not available */
+  context: string;
+  /** Scout quality score (1.0–10.0) */
+  score: number;
+  /** Source tag indicating how this target was identified */
+  sourceTag: "REPLY_CANDIDATE" | "QUOTE_CANDIDATE_EXTRA";
+}
+
+/** Persisted state tracking replies across cycles */
+export interface ReplyState {
+  /** Set of cast hashes that have been replied to (dedup, max 500) */
+  repliedHashes: string[];
+  /** Number of replies posted in the current daily window */
+  dailyCount: number;
+  /** Date string (YYYY-MM-DD) for daily counter reset */
+  dailyDate: string;
+  /** Items awaiting reply, deferred from previous cycles */
+  pendingQueue: ReplyTarget[];
+  /** ISO timestamp of the last reply cycle */
+  lastCycleAt: string;
+}
+
+/** Result of a single REPLY_FARCASTER cycle */
+export interface ReplyCycleResult {
+  /** Number of replies successfully posted */
+  replied: number;
+  /** Number of reply API calls that failed */
+  failed: number;
+  /** Number of items skipped (already replied, below threshold, etc.) */
+  skipped: number;
+  /** Reply count in the current daily window */
+  dailyCount: number;
+  /** Maximum daily replies allowed */
+  dailyLimit: number;
+  /** Number of items remaining in the pending queue */
+  pendingRemaining: number;
+}
