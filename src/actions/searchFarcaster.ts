@@ -74,6 +74,10 @@ export function createPluginConfig(runtime: IAgentRuntime): PluginConfig {
     defaultKeywords: DEFAULT_KEYWORDS,
     maxResults: Number(runtime.getSetting("SCOUT_MAX_RESULTS")) || DEFAULT_MAX_RESULTS,
     minScore: Number(runtime.getSetting("SCOUT_MIN_SCORE")) || DEFAULT_MIN_SCORE,
+    // Intensity controls — set by social-intensity.sh based on active plan
+    disableTier2: runtime.getSetting("FARCASTER_DISABLE_TIER2") === "true",
+    disableTier3: runtime.getSetting("FARCASTER_DISABLE_TIER3") === "true",
+    keywordLimit: Number(runtime.getSetting("FARCASTER_SEARCH_KEYWORD_LIMIT")) || 0,
   };
 }
 
@@ -874,26 +878,45 @@ export const searchFarcasterAction: Action = {
 
     // 4. Extract keywords (with WP8.3 cache layer — 6h TTL)
     const messageText = (message?.content?.text as string) ?? "";
-    const keywords = await extractKeywords(messageText, runtime);
+    const rawKeywords = await extractKeywords(messageText, runtime);
+
+    // 4b. Apply keyword limit from intensity config (FARCASTER_SEARCH_KEYWORD_LIMIT)
+    // Limits the number of keywords used in Tier 1 search to save credits.
+    // Each keyword triggers a separate searchAllKeywords API call (~149 credits each).
+    const keywords = config.keywordLimit && config.keywordLimit > 0
+      ? rawKeywords.slice(0, config.keywordLimit)
+      : rawKeywords;
+    if (config.keywordLimit && config.keywordLimit > 0 && rawKeywords.length > config.keywordLimit) {
+      elizaLogger.log(
+        `[NEYNAR-SEARCH] Keyword limit active: ${rawKeywords.length} → ${keywords.length} keywords (saves ~${(rawKeywords.length - keywords.length) * 149} credits/cycle)`
+      );
+    }
 
     // 5. Tier 1: Topic Discovery — every cycle, cached
     const tier1Casts = await runTier1(apiKey, keywords, cycleNumber);
 
-    // 6. Tier 2: Profile Monitoring — every 4 cycles (~2x/day) [optimized 2026-05-29]
-    // Was every 2 cycles (~4x/day) — reduced to save ~3,600 Neynar credits/day.
-    // Tier 1 keyword search catches most relevant posts from monitored profiles;
-    // Tier 2 profile monitoring is redundant coverage for high-frequency accounts.
+    // 6. Tier 2: Profile Monitoring — controlled by intensity config
+    // Disabled via FARCASTER_DISABLE_TIER2=true (e.g. Beginner plan) to save ~38 credits/profile/cycle.
+    // When enabled, runs every 4 cycles (~2x/day) [optimized 2026-05-29].
     let tier2Casts: NeynarCast[] = [];
-    if (cycleNumber % 4 === 0) {
+    if (config.disableTier2) {
+      elizaLogger.log("[NEYNAR-SEARCH] Tier 2 (profile monitoring) disabled by intensity config");
+    } else if (cycleNumber % 4 === 0) {
       const monitoredProfiles = await resolveMonitoredProfiles(apiKey, runtime, config);
       tier2Casts = await runTier2(apiKey, monitoredProfiles);
     } else {
       elizaLogger.log("[NEYNAR-SEARCH] Tier 2 (profile monitoring) skipped — odd cycle");
     }
 
-    // 7. Tier 3: Inbound Engagement — every cycle
-    const tier3Casts = await runTier3(apiKey, config);
+    // 7. Tier 3: Inbound Engagement — controlled by intensity config
+    // Disabled via FARCASTER_DISABLE_TIER3=true (e.g. Beginner plan) to save ~148 credits/cycle.
     // Tier 3 uses notifications endpoint (~148 credits/call, 1 call/cycle)
+    let tier3Casts: NeynarCast[] = [];
+    if (config.disableTier3) {
+      elizaLogger.log("[NEYNAR-SEARCH] Tier 3 (inbound engagement) disabled by intensity config");
+    } else {
+      tier3Casts = await runTier3(apiKey, config);
+    }
 
     // 8. Merge and deduplicate all tiers
     const allCasts = mergeAndDedupe([tier1Casts, tier2Casts, tier3Casts]);

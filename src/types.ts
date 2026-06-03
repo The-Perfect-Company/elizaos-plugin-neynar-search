@@ -78,6 +78,12 @@ export interface PluginConfig {
   maxResults: number;
   /** Minimum score threshold; casts below this are discarded unless fallback triggers (default: 6) */
   minScore: number;
+  /** If true, skip Tier 2 (profile monitoring) entirely — reduces ~38 credits/cycle/profile */
+  disableTier2?: boolean;
+  /** If true, skip Tier 3 (inbound engagement detection) — reduces ~148 credits/cycle */
+  disableTier3?: boolean;
+  /** Maximum number of keywords to use in Tier 1 search (default: no limit). Saves ~149 credits per excluded keyword */
+  keywordLimit?: number;
 }
 
 /**

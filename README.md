@@ -113,6 +113,9 @@ All optional settings have sensible defaults. Override any of them via environme
 | `TARGET_LIST_JSON_PATH` | `{cwd}/characters/archon_europae/farcaster_target_list.json` | Path to the generated target list JSON (Tier 2 profile monitoring) |
 | `SCOUT_MAX_RESULTS` | `5` | Maximum number of opportunities in the ranked queue |
 | `SCOUT_MIN_SCORE` | `6` | Minimum score threshold; casts below this are discarded (unless fallback triggers) |
+| `FARCASTER_DISABLE_TIER2` | `false` | Skip Tier 2 (profile monitoring) — saves ~38 credits per monitored profile per cycle |
+| `FARCASTER_DISABLE_TIER3` | `false` | Skip Tier 3 (inbound engagement detection) — saves ~148 credits per cycle |
+| `FARCASTER_SEARCH_KEYWORD_LIMIT` | *(no limit)* | Max keywords for Tier 1 search — saves ~149 credits per excluded keyword |
 
 ### Optional — LIKE_FARCASTER (Liking)
 
