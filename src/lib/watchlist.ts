@@ -69,7 +69,7 @@ function loadWatchlist(): WatchlistEntry[] {
     }
   } catch (err) {
     elizaLogger.warn(
-      `[watchlist] Could not load watchlist from ${WATCHLIST_PATH} — starting fresh: ${String(err)}`
+      `[WATCHLIST] Could not load watchlist from ${WATCHLIST_PATH} — starting fresh: ${String(err)}`
     );
   }
   return [];
@@ -83,7 +83,7 @@ function saveWatchlist(entries: WatchlistEntry[]): void {
     }
     fs.writeFileSync(WATCHLIST_PATH, JSON.stringify(entries, null, 2));
   } catch (err) {
-    elizaLogger.error(`[watchlist] Failed to save watchlist: ${String(err)}`);
+    elizaLogger.error(`[WATCHLIST] Failed to save watchlist: ${String(err)}`);
   }
 }
 
@@ -103,7 +103,7 @@ function saveWatchlist(entries: WatchlistEntry[]): void {
  */
 export async function updateWatchlist(opportunities: ScoredOpportunity[]): Promise<void> {
   if (!opportunities || opportunities.length === 0) {
-    elizaLogger.info("[watchlist] No opportunities to track — skipping watchlist update");
+    elizaLogger.info("[WATCHLIST] No opportunities to track — skipping watchlist update");
     return;
   }
 
@@ -139,13 +139,13 @@ export async function updateWatchlist(opportunities: ScoredOpportunity[]): Promi
           existing.isMonitored = true;
           promotions++;
           elizaLogger.info(
-            `[watchlist] @${op.author.username} FID:${fid} ` +
+            `[WATCHLIST] @${op.author.username} FID:${fid} ` +
               `auto-promoted to Tier 2 (avg ${existing.avgScore.toFixed(1)}/10 ` +
               `over ${existing.appearanceCount} appearances)`
           );
         } else {
           elizaLogger.info(
-            `[watchlist] @${op.author.username} FID:${fid} qualifies for promotion ` +
+            `[WATCHLIST] @${op.author.username} FID:${fid} qualifies for promotion ` +
               `but ${MAX_AUTO_MONITORED} limit reached`
           );
         }
@@ -184,7 +184,7 @@ export async function updateWatchlist(opportunities: ScoredOpportunity[]): Promi
           entry.isMonitored = false;
           (entry as any).__consecutiveLow = 0;
           elizaLogger.info(
-            `[watchlist] @${entry.handle} FID:${entry.fid} demoted from Tier 2 ` +
+            `[WATCHLIST] @${entry.handle} FID:${entry.fid} demoted from Tier 2 ` +
               `(avg ${entry.avgScore.toFixed(1)}/10 below ${DEMOTION_SCORE_FLOOR} for ` +
               `${DEMOTION_CYCLES_THRESHOLD} cycles)`
           );
@@ -201,7 +201,7 @@ export async function updateWatchlist(opportunities: ScoredOpportunity[]): Promi
 
   const monitoredCount = watchlist.filter((w) => w.isMonitored).length;
   elizaLogger.info(
-    `[watchlist] Updated: ${watchlist.length} total entries, ` +
+    `[WATCHLIST] Updated: ${watchlist.length} total entries, ` +
       `${newEntries} new, ${promotions} promoted, ${monitoredCount} now monitored`
   );
 }

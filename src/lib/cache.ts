@@ -35,7 +35,7 @@ export function loadCachedResults(): CacheEntry | null {
   try {
     const cachePath = getCachePath();
     if (!fs.existsSync(cachePath)) {
-      elizaLogger.log("[NeynarCache] No cache file found");
+      elizaLogger.log("[NEYNAARCACHE] No cache file found");
       return null;
     }
 
@@ -44,7 +44,7 @@ export function loadCachedResults(): CacheEntry | null {
 
     // Version mismatch → invalidate
     if (entry.version !== CACHE_VERSION) {
-      elizaLogger.log("[NeynarCache] Cache version mismatch — invalidating");
+      elizaLogger.log("[NEYNAARCACHE] Cache version mismatch — invalidating");
       fs.unlinkSync(cachePath);
       return null;
     }
@@ -52,15 +52,15 @@ export function loadCachedResults(): CacheEntry | null {
     // Expired?
     const age = Date.now() - entry.timestamp;
     if (age > entry.ttlMs) {
-      elizaLogger.log(`[NeynarCache] Cache expired (age=${Math.round(age/1000/60)}m, ttl=${Math.round(entry.ttlMs/1000/60)}m)`);
+      elizaLogger.log(`[NEYNAARCACHE] Cache expired (age=${Math.round(age/1000/60)}m, ttl=${Math.round(entry.ttlMs/1000/60)}m)`);
       fs.unlinkSync(cachePath);
       return null;
     }
 
-    elizaLogger.log(`[NeynarCache] Cache HIT — age=${Math.round(age/1000/60)}m, ${entry.results.length} casts, ${entry.keywords.length} keywords`);
+    elizaLogger.log(`[NEYNAARCACHE] Cache HIT — age=${Math.round(age/1000/60)}m, ${entry.results.length} casts, ${entry.keywords.length} keywords`);
     return entry;
   } catch (err) {
-    elizaLogger.warn("[NeynarCache] Error loading cache: " + String(err));
+    elizaLogger.warn("[NEYNAARCACHE] Error loading cache: " + String(err));
     return null;
   }
 }
@@ -82,9 +82,9 @@ export function saveCachedResults(
     };
 
     fs.writeFileSync(getCachePath(), JSON.stringify(entry, null, 2), "utf-8");
-    elizaLogger.log(`[NeynarCache] Cache SAVED — ${results.length} casts, expires in ${Math.round(CACHE_TTL_MS/1000/60)}m`);
+    elizaLogger.log(`[NEYNAARCACHE] Cache SAVED — ${results.length} casts, expires in ${Math.round(CACHE_TTL_MS/1000/60)}m`);
   } catch (err) {
-    elizaLogger.warn("[NeynarCache] Error saving cache: " + String(err));
+    elizaLogger.warn("[NEYNAARCACHE] Error saving cache: " + String(err));
   }
 }
 
@@ -96,9 +96,9 @@ export function clearCache(): void {
     const cachePath = getCachePath();
     if (fs.existsSync(cachePath)) {
       fs.unlinkSync(cachePath);
-      elizaLogger.log("[NeynarCache] Cache cleared");
+      elizaLogger.log("[NEYNAARCACHE] Cache cleared");
     }
   } catch (err) {
-    elizaLogger.warn("[NeynarCache] Error clearing cache: " + String(err));
+    elizaLogger.warn("[NEYNAARCACHE] Error clearing cache: " + String(err));
   }
 }

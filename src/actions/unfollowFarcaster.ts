@@ -43,13 +43,13 @@ export const unfollowFarcasterAction: Action = {
     const archonFid = runtime.getSetting("FARCASTER_FID");
 
     elizaLogger.info(
-      `[NeynarDebug] UNFOLLOW_FARCASTER: validate — ` +
+      `[NEYNADEBUG] UNFOLLOW_FARCASTER: validate — ` +
       `apiKey=${!!apiKey} signerUuid=${!!signerUuid} archonFid=${!!archonFid}`
     );
 
     if (!apiKey || !signerUuid || !archonFid) {
       elizaLogger.warn(
-        "[NeynarDebug] UNFOLLOW_FARCASTER: missing required settings " +
+        "[NEYNADEBUG] UNFOLLOW_FARCASTER: missing required settings " +
         "(FARCASTER_NEYNAR_API_KEY, FARCASTER_NEYNAR_SIGNER_UUID, FARCASTER_FID)"
       );
       return false;
@@ -64,7 +64,7 @@ export const unfollowFarcasterAction: Action = {
     _state: State,
     callback: any
   ): Promise<void> => {
-    elizaLogger.info("[NeynarDebug] UNFOLLOW_FARCASTER: weekly cycle started");
+    elizaLogger.info("[NEYNADEBUG] UNFOLLOW_FARCASTER: weekly cycle started");
 
     // -----------------------------------------------------------------------
     // Phase 1: Load config
@@ -77,7 +77,7 @@ export const unfollowFarcasterAction: Action = {
     );
 
     elizaLogger.info(
-      `[NeynarDebug] UNFOLLOW_FARCASTER: config — ` +
+      `[NEYNADEBUG] UNFOLLOW_FARCASTER: config — ` +
       `archonFid=${archonFid} maxUnfollows=${maxUnfollows}`
     );
 
@@ -87,7 +87,7 @@ export const unfollowFarcasterAction: Action = {
     const followState: FollowState = loadFollowState();
 
     elizaLogger.info(
-      `[NeynarDebug] UNFOLLOW_FARCASTER: state loaded — ` +
+      `[NEYNADEBUG] UNFOLLOW_FARCASTER: state loaded — ` +
       `${followState.followedFids.length} currently followed, ` +
       `cycle #${followState.unfollowCycleCount}, ` +
       `cursor=${followState.followerCursor || "null (starting fresh)"}`
@@ -104,13 +104,13 @@ export const unfollowFarcasterAction: Action = {
     );
 
     elizaLogger.info(
-      `[NeynarDebug] UNFOLLOW_FARCASTER: received ${pageFids.length} follower FIDs from this page, ` +
+      `[NEYNADEBUG] UNFOLLOW_FARCASTER: received ${pageFids.length} follower FIDs from this page, ` +
       `hasMore=${nextCursor !== null}`
     );
 
     if (pageFids.length === 0) {
       elizaLogger.warn(
-        "[NeynarDebug] UNFOLLOW_FARCASTER: no followers returned — " +
+        "[NEYNADEBUG] UNFOLLOW_FARCASTER: no followers returned — " +
         "possible API issue or Archon has no followers yet"
       );
     }
@@ -124,7 +124,7 @@ export const unfollowFarcasterAction: Action = {
       .slice(0, maxUnfollows);
 
     elizaLogger.info(
-      `[NeynarDebug] UNFOLLOW_FARCASTER: ${toUnfollow.length} unfollow candidates ` +
+      `[NEYNADEBUG] UNFOLLOW_FARCASTER: ${toUnfollow.length} unfollow candidates ` +
       `(checked ${followState.followedFids.length} followed FIDs against ` +
       `${pageFids.length} follower FIDs on this page)`
     );
@@ -142,7 +142,7 @@ export const unfollowFarcasterAction: Action = {
 
     if (toUnfollow.length > 0) {
       elizaLogger.info(
-        `[NeynarDebug] UNFOLLOW_FARCASTER: unfollowing ${toUnfollow.length} users: [${toUnfollow.join(", ")}]`
+        `[NEYNADEBUG] UNFOLLOW_FARCASTER: unfollowing ${toUnfollow.length} users: [${toUnfollow.join(", ")}]`
       );
 
       const unfollowResult = await unfollowUsers(apiKey, signerUuid, toUnfollow);
@@ -151,7 +151,7 @@ export const unfollowFarcasterAction: Action = {
         markUnfollowed(followState, unfollowResult.unfollowed);
         result.unfollowed = unfollowResult.unfollowed.length;
         elizaLogger.info(
-          `[NeynarDebug] UNFOLLOW_FARCASTER: successfully unfollowed ${unfollowResult.unfollowed.length} users`
+          `[NEYNADEBUG] UNFOLLOW_FARCASTER: successfully unfollowed ${unfollowResult.unfollowed.length} users`
         );
       }
 
@@ -160,12 +160,12 @@ export const unfollowFarcasterAction: Action = {
           (e) => `FID ${e.fid}: ${e.reason}`
         );
         elizaLogger.warn(
-          `[NeynarDebug] UNFOLLOW_FARCASTER: ${unfollowResult.errors.length} unfollow errors: ${result.errors.join("; ")}`
+          `[NEYNADEBUG] UNFOLLOW_FARCASTER: ${unfollowResult.errors.length} unfollow errors: ${result.errors.join("; ")}`
         );
       }
     } else {
       elizaLogger.info(
-        "[NeynarDebug] UNFOLLOW_FARCASTER: all followed accounts reciprocate on this page — no unfollows needed"
+        "[NEYNADEBUG] UNFOLLOW_FARCASTER: all followed accounts reciprocate on this page — no unfollows needed"
       );
     }
 
@@ -182,7 +182,7 @@ export const unfollowFarcasterAction: Action = {
       : "Full follower pass complete — restarting from page 1 next week";
 
     elizaLogger.info(
-      `[NeynarDebug] UNFOLLOW_FARCASTER: cycle #${followState.unfollowCycleCount} complete — ` +
+      `[NEYNADEBUG] UNFOLLOW_FARCASTER: cycle #${followState.unfollowCycleCount} complete — ` +
       `unfollowed=${result.unfollowed} pageSize=${result.pageSize} ` +
       `pageRemaining=${result.pageRemaining} errors=${result.errors.length}`
     );

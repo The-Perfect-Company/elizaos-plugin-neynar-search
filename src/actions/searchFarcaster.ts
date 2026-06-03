@@ -115,7 +115,7 @@ function readKeywordCache(): KeywordCache | null {
     const cache: KeywordCache = JSON.parse(raw);
     const age = Date.now() - new Date(cache.cachedAt).getTime();
     if (age > KEYWORD_CACHE_TTL_MS) {
-      elizaLogger.log("[ARCHON-v2][SCOUT-CACHE] Keyword cache expired (age: " + Math.round(age / 60000) + "m, TTL: 360m)");
+      elizaLogger.log("[ARCHON-V2][SCOUT-CACHE] Keyword cache expired (age: " + Math.round(age / 60000) + "m, TTL: 360m)");
       return null;
     }
     return cache;
@@ -139,7 +139,7 @@ function writeKeywordCache(keywords: string[]): void {
     };
     fs.writeFileSync(KEYWORD_CACHE_PATH, JSON.stringify(cache, null, 2), "utf-8");
   } catch (err) {
-    elizaLogger.warn("[ARCHON-v2][SCOUT-CACHE] Failed to write keyword cache: " + String(err));
+    elizaLogger.warn("[ARCHON-V2][SCOUT-CACHE] Failed to write keyword cache: " + String(err));
   }
 }
 
@@ -149,20 +149,20 @@ function writeKeywordCache(keywords: string[]): void {
  *
  * Includes a cache layer (WP8.3): results are cached for 6h (KEYWORD_CACHE_TTL_MS).
  * Re-extraction from RAG only happens if cache is expired or empty.
- * Cache hits/misses logged with [ARCHON-v2][SCOUT-CACHE] tag.
+ * Cache hits/misses logged with [ARCHON-V2][SCOUT-CACHE] tag.
  */
 async function extractKeywordsFromKnowledge(runtime: IAgentRuntime): Promise<string[]> {
   // Check cache first
   const cached = readKeywordCache();
   if (cached && cached.keywords.length > 0) {
-    elizaLogger.log("[ARCHON-v2][SCOUT-CACHE] Cache HIT — using cached keywords (" + cached.keywords.length + " keywords)");
+    elizaLogger.log("[ARCHON-V2][SCOUT-CACHE] Cache HIT — using cached keywords (" + cached.keywords.length + " keywords)");
     return cached.keywords;
   }
 
   if (cached === null) {
-    elizaLogger.log("[ARCHON-v2][SCOUT-CACHE] Cache MISS — re-extracting from RAG");
+    elizaLogger.log("[ARCHON-V2][SCOUT-CACHE] Cache MISS — re-extracting from RAG");
   } else {
-    elizaLogger.log("[ARCHON-v2][SCOUT-CACHE] Cache empty — extracting from RAG");
+    elizaLogger.log("[ARCHON-V2][SCOUT-CACHE] Cache empty — extracting from RAG");
   }
 
   try {
@@ -190,7 +190,7 @@ async function extractKeywordsFromKnowledge(runtime: IAgentRuntime): Promise<str
     // Fallback to message manager memories if knowledge table had nothing
     if (targetListEntries.length === 0) {
       elizaLogger.info(
-        "[neynar-search] target list files not found in knowledge table. Trying message memories..."
+        "[NEYNAR-SEARCH] target list files not found in knowledge table. Trying message memories..."
       );
 
       const knowledgeResults = await runtime.messageManager.getMemories({
@@ -207,7 +207,7 @@ async function extractKeywordsFromKnowledge(runtime: IAgentRuntime): Promise<str
     
     if (targetListEntries.length === 0) {
       elizaLogger.info(
-        "[neynar-search] target list files not found in RAG knowledge. Using DEFAULT_KEYWORDS."
+        "[NEYNAR-SEARCH] target list files not found in RAG knowledge. Using DEFAULT_KEYWORDS."
       );
       // Cache the defaults to avoid hitting RAG every cycle
       writeKeywordCache(DEFAULT_KEYWORDS);
@@ -215,7 +215,7 @@ async function extractKeywordsFromKnowledge(runtime: IAgentRuntime): Promise<str
     }
     
     elizaLogger.info(
-      `[neynar-search] Found ${targetListEntries.length} target list entries in RAG — using vector terms + hashtags only`
+      `[NEYNAR-SEARCH] Found ${targetListEntries.length} target list entries in RAG — using vector terms + hashtags only`
     );
     
     // Extract keywords from the content
@@ -267,7 +267,7 @@ async function extractKeywordsFromKnowledge(runtime: IAgentRuntime): Promise<str
       }).slice(0, 30); // cap at 30
       
       elizaLogger.success(
-        `[neynar-search] Extracted ${extractedKeywords.length} vector/hashtag keywords from RAG, ` +
+        `[NEYNAR-SEARCH] Extracted ${extractedKeywords.length} vector/hashtag keywords from RAG, ` +
         `merged with ${DEFAULT_KEYWORDS.length} defaults (total: ${mergedKeywords.length})`
       );
 
@@ -277,18 +277,18 @@ async function extractKeywordsFromKnowledge(runtime: IAgentRuntime): Promise<str
       return mergedKeywords;
     }
     
-    elizaLogger.info("[neynar-search] No keywords extracted from RAG. Using defaults.");
+    elizaLogger.info("[NEYNAR-SEARCH] No keywords extracted from RAG. Using defaults.");
     // Cache the defaults
     writeKeywordCache(DEFAULT_KEYWORDS);
     return DEFAULT_KEYWORDS;
     
   } catch (err) {
-    elizaLogger.warn("[neynar-search] Error reading RAG knowledge: " + String(err));
+    elizaLogger.warn("[NEYNAR-SEARCH] Error reading RAG knowledge: " + String(err));
     // On error, try cache fallback even if expired
     try {
       const staleCache = readKeywordCache();
       if (staleCache) {
-        elizaLogger.log("[ARCHON-v2][SCOUT-CACHE] RAG error — using stale cached keywords as fallback");
+        elizaLogger.log("[ARCHON-V2][SCOUT-CACHE] RAG error — using stale cached keywords as fallback");
         return staleCache.keywords;
       }
     } catch {
@@ -422,7 +422,7 @@ async function deliverToArchon(queueText: string, config: PluginConfig): Promise
   const url = `${config.archonUrl}/${config.archonAgentId}/ingest`;
 
   elizaLogger.info(
-    `[NeynarDebug] Attempting DirectClient delivery. Length: ${queueText.length} chars. ` +
+    `[NEYNADEBUG] Attempting DirectClient delivery. Length: ${queueText.length} chars. ` +
     `Approximate tokens: ${Math.ceil(queueText.length / 4)}`
   );
 
@@ -454,19 +454,19 @@ async function deliverToArchon(queueText: string, config: PluginConfig): Promise
 
     if (res.status === 202 || res.status === 200) {
       elizaLogger.success(
-        `[NeynarDebug] DirectClient delivery accepted (${res.status}) in ${deliveryDuration}ms. ` +
+        `[NEYNADEBUG] DirectClient delivery accepted (${res.status}) in ${deliveryDuration}ms. ` +
         `Opportunities: ${opportunityCount}, Priority: ${priorityCount}`
       );
     } else {
       elizaLogger.info(
-        `[NeynarDebug] DirectClient returned ${res.status} in ${deliveryDuration}ms. ` +
+        `[NEYNADEBUG] DirectClient returned ${res.status} in ${deliveryDuration}ms. ` +
         `Using shared DB fallback (normal behavior).`
       );
     }
   } catch (err: any) {
     const deliveryDuration = Date.now() - deliveryStart;
     elizaLogger.info(
-      `[NeynarDebug] DirectClient unavailable (${err.message}) after ${deliveryDuration}ms. ` +
+      `[NEYNADEBUG] DirectClient unavailable (${err.message}) after ${deliveryDuration}ms. ` +
       `Using shared DB fallback (normal behavior).`
     );
   }
@@ -509,7 +509,7 @@ function getNextCycleNumber(): number {
     fs.writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
     return state.cycleNumber;
   } catch (err) {
-    elizaLogger.warn("[neynar-search] Cycle counter error: " + String(err));
+    elizaLogger.warn("[NEYNAR-SEARCH] Cycle counter error: " + String(err));
     return 1; // default to cycle 1 on error
   }
 }
@@ -527,19 +527,19 @@ async function runTier1(
   if (cycleNumber > 1) {
     const cached = loadCachedResults();
     if (cached) {
-      elizaLogger.log(`[neynar-search] Tier 1: Using CACHED results (${cached.results.length} casts)`);
+      elizaLogger.log(`[NEYNAR-SEARCH] Tier 1: Using CACHED results (${cached.results.length} casts)`);
       return cached.results;
     }
   }
 
   // Cache miss or first cycle — do fresh API calls
-  elizaLogger.log(`[neynar-search] Tier 1: Fresh API search — ${keywords.length} keywords`);
+  elizaLogger.log(`[NEYNAR-SEARCH] Tier 1: Fresh API search — ${keywords.length} keywords`);
 
   let casts: NeynarCast[];
   try {
     casts = await searchAllKeywords(apiKey, keywords, 10, 5);
   } catch (err) {
-    elizaLogger.error("[neynar-search] Tier 1 searchAllKeywords threw: " + String(err));
+    elizaLogger.error("[NEYNAR-SEARCH] Tier 1 searchAllKeywords threw: " + String(err));
     casts = [];
   }
 
@@ -571,7 +571,7 @@ function recordFidFetchResult(fid: number, castCount: number): void {
     _staleFidFailures.set(fid, current + 1);
     if (current + 1 >= STALE_FID_THRESHOLD) {
       elizaLogger.warn(
-        `[neynar-search] Stale FID detected: ${fid} — ` +
+        `[NEYNAR-SEARCH] Stale FID detected: ${fid} — ` +
         `returned 0 casts for ${current + 1} consecutive cycles. ` +
         `Will skip in future cycles.`
       );
@@ -592,12 +592,12 @@ async function runTier2(
   profiles: MonitoredProfile[]
 ): Promise<NeynarCast[]> {
   if (profiles.length === 0) {
-    elizaLogger.info("[neynar-search] Tier 2: No monitored profiles to check — skipping");
+    elizaLogger.info("[NEYNAR-SEARCH] Tier 2: No monitored profiles to check — skipping");
     return [];
   }
 
   elizaLogger.info(
-    `[neynar-search] Tier 2: Profile monitoring — ${profiles.length} profiles resolved`
+    `[NEYNAR-SEARCH] Tier 2: Profile monitoring — ${profiles.length} profiles resolved`
   );
 
   const allCasts: NeynarCast[] = [];
@@ -606,7 +606,7 @@ async function runTier2(
     // Skip stale FIDs to avoid wasted API calls
     if (isStaleFid(profile.fid)) {
       elizaLogger.info(
-        `[neynar-search] Tier 2: Skipping stale FID ${profile.fid} (@${profile.handle}) — ` +
+        `[NEYNAR-SEARCH] Tier 2: Skipping stale FID ${profile.fid} (@${profile.handle}) — ` +
         `failed ${_staleFidFailures.get(profile.fid)} consecutive cycles`
       );
       continue;
@@ -617,11 +617,11 @@ async function runTier2(
       recordFidFetchResult(profile.fid, casts.length);
 
       elizaLogger.info(
-        `[neynar-search] Tier 2: @${profile.handle} (fid=${profile.fid}, ${profile.followerCount.toLocaleString()} followers) — ${casts.length} recent casts`
+        `[NEYNAR-SEARCH] Tier 2: @${profile.handle} (fid=${profile.fid}, ${profile.followerCount.toLocaleString()} followers) — ${casts.length} recent casts`
       );
       allCasts.push(...casts);
     } catch (err) {
-      elizaLogger.warn(`[neynar-search] Tier 2: Error fetching @${profile.handle}: ${String(err)}`);
+      elizaLogger.warn(`[NEYNAR-SEARCH] Tier 2: Error fetching @${profile.handle}: ${String(err)}`);
       // Network errors count as failures too
       recordFidFetchResult(profile.fid, 0);
     }
@@ -631,7 +631,7 @@ async function runTier2(
   }
 
   elizaLogger.info(
-    `[neynar-search] Tier 2 complete: ${allCasts.length} total casts from ${profiles.length} profiles`
+    `[NEYNAR-SEARCH] Tier 2 complete: ${allCasts.length} total casts from ${profiles.length} profiles`
   );
   return allCasts;
 }
@@ -647,14 +647,14 @@ async function runTier3(apiKey: string, config: PluginConfig): Promise<NeynarCas
   const fid = config.archonFarcasterFid;
   
   elizaLogger.info(
-    `[NeynarDebug] Tier 3: Checking inbound engagement for FID ${fid}...`
+    `[NEYNADEBUG] Tier 3: Checking inbound engagement for FID ${fid}...`
   );
 
   try {
     const notifications = await getNotifications(apiKey, fid, 25);
 
     if (notifications.length === 0) {
-      elizaLogger.info("[NeynarDebug] Tier 3: No inbound engagement detected");
+      elizaLogger.info("[NEYNADEBUG] Tier 3: No inbound engagement detected");
       return [];
     }
 
@@ -664,7 +664,7 @@ async function runTier3(apiKey: string, config: PluginConfig): Promise<NeynarCas
     const recasts = notifications.filter(n => n.type === "recast").length;
 
     elizaLogger.info(
-      `[NeynarDebug] Tier 3: ${replies} replies, ${mentions} mentions, ${recasts} recasts`
+      `[NEYNADEBUG] Tier 3: ${replies} replies, ${mentions} mentions, ${recasts} recasts`
     );
 
     // Extract the engagement casts as NeynarCast[]
@@ -680,7 +680,7 @@ async function runTier3(apiKey: string, config: PluginConfig): Promise<NeynarCas
     return engagementCasts;
   } catch (err) {
     elizaLogger.warn(
-      `[NeynarDebug] Tier 3 ERROR: ${err}`
+      `[NEYNADEBUG] Tier 3 ERROR: ${err}`
     );
     return [];
   }
@@ -704,7 +704,7 @@ async function resolveMonitoredProfiles(
   // Return cached profiles if already resolved this process lifetime
   if (_resolvedProfilesCache && _resolvedProfilesCache.length > 0) {
     elizaLogger.info(
-      `[neynar-search] Using ${_resolvedProfilesCache.length} cached monitored profiles`
+      `[NEYNAR-SEARCH] Using ${_resolvedProfilesCache.length} cached monitored profiles`
     );
     return _resolvedProfilesCache;
   }
@@ -729,12 +729,12 @@ async function resolveMonitoredProfiles(
     }
   } catch (err) {
     elizaLogger.warn(
-      `[neynar-search] resolveMonitoredProfiles: Cannot read ${config.targetListJsonPath} — ${String(err)}`
+      `[NEYNAR-SEARCH] resolveMonitoredProfiles: Cannot read ${config.targetListJsonPath} — ${String(err)}`
     );
   }
 
   elizaLogger.info(
-    `[neynar-search] resolveMonitoredProfiles: ${staticProfiles.length} static FIDs from target list`
+    `[NEYNAR-SEARCH] resolveMonitoredProfiles: ${staticProfiles.length} static FIDs from target list`
   );
 
   // -----------------------------------------------------------------------
@@ -760,13 +760,13 @@ async function resolveMonitoredProfiles(
     }
   } catch (err) {
     elizaLogger.warn(
-      `[neynar-search] resolveMonitoredProfiles: Watchlist read error — ${String(err)}`
+      `[NEYNAR-SEARCH] resolveMonitoredProfiles: Watchlist read error — ${String(err)}`
     );
   }
 
   if (autoProfiles.length > 0) {
     elizaLogger.info(
-      `[neynar-search] resolveMonitoredProfiles: ${autoProfiles.length} auto-discovered FIDs from watchlist`
+      `[NEYNAR-SEARCH] resolveMonitoredProfiles: ${autoProfiles.length} auto-discovered FIDs from watchlist`
     );
   }
 
@@ -787,7 +787,7 @@ async function resolveMonitoredProfiles(
   _resolvedProfilesCache = merged;
 
   elizaLogger.info(
-    `[neynar-search] resolveMonitoredProfiles: ${merged.length} total profiles (${staticProfiles.length} static + ${autoProfiles.length} auto)`
+    `[NEYNAR-SEARCH] resolveMonitoredProfiles: ${merged.length} total profiles (${staticProfiles.length} static + ${autoProfiles.length} auto)`
   );
 
   return merged;
@@ -838,7 +838,7 @@ export const searchFarcasterAction: Action = {
     const apiKey = runtime.getSetting("FARCASTER_NEYNAR_API_KEY");
     if (!apiKey) {
       elizaLogger.warn(
-        "[neynar-search] FARCASTER_NEYNAR_API_KEY not set — SEARCH_FARCASTER disabled"
+        "[NEYNAR-SEARCH] FARCASTER_NEYNAR_API_KEY not set — SEARCH_FARCASTER disabled"
       );
       return false;
     }
@@ -854,7 +854,7 @@ export const searchFarcasterAction: Action = {
   ): Promise<boolean> => {
     const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
-    elizaLogger.log(`[neynar-search] Starting THREE-TIER discovery cycle at ${timestamp}`);
+    elizaLogger.log(`[NEYNAR-SEARCH] Starting THREE-TIER discovery cycle at ${timestamp}`);
 
     // 1. Build config from runtime settings
     const config = createPluginConfig(runtime);
@@ -863,14 +863,14 @@ export const searchFarcasterAction: Action = {
     const apiKey = config.apiKey;
     if (!apiKey) {
       const errText = "[SCOUT] ERROR: FARCASTER_NEYNAR_API_KEY not configured. Cycle aborted.";
-      elizaLogger.error("[neynar-search] " + errText);
+      elizaLogger.error("[NEYNAR-SEARCH] " + errText);
       callback({ text: errText });
       return false;
     }
 
     // 3. Cycle counter (increment each run)
     const cycleNumber = getNextCycleNumber();
-    elizaLogger.log(`[neynar-search] Cycle #${cycleNumber} — determining which tiers to run`);
+    elizaLogger.log(`[NEYNAR-SEARCH] Cycle #${cycleNumber} — determining which tiers to run`);
 
     // 4. Extract keywords (with WP8.3 cache layer — 6h TTL)
     const messageText = (message?.content?.text as string) ?? "";
@@ -888,7 +888,7 @@ export const searchFarcasterAction: Action = {
       const monitoredProfiles = await resolveMonitoredProfiles(apiKey, runtime, config);
       tier2Casts = await runTier2(apiKey, monitoredProfiles);
     } else {
-      elizaLogger.log("[neynar-search] Tier 2 (profile monitoring) skipped — odd cycle");
+      elizaLogger.log("[NEYNAR-SEARCH] Tier 2 (profile monitoring) skipped — odd cycle");
     }
 
     // 7. Tier 3: Inbound Engagement — every cycle
@@ -898,7 +898,7 @@ export const searchFarcasterAction: Action = {
     // 8. Merge and deduplicate all tiers
     const allCasts = mergeAndDedupe([tier1Casts, tier2Casts, tier3Casts]);
     elizaLogger.log(
-      `[neynar-search] Merged tiers: T1=${tier1Casts.length}, T2=${tier2Casts.length}, ` +
+      `[NEYNAR-SEARCH] Merged tiers: T1=${tier1Casts.length}, T2=${tier2Casts.length}, ` +
       `T3=${tier3Casts.length}, unique=${allCasts.length}`
     );
 
@@ -908,7 +908,7 @@ export const searchFarcasterAction: Action = {
     );
 
     elizaLogger.log(
-      `[neynar-search] ${opportunities.length} opportunities ${isFallback ? "(fallback)" : "above threshold"}`
+      `[NEYNAR-SEARCH] ${opportunities.length} opportunities ${isFallback ? "(fallback)" : "above threshold"}`
     );
 
     // 9b. Update watchlist with scored opportunities (non-blocking)
