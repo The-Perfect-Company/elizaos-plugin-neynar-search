@@ -5,6 +5,7 @@
 Read-only discovery (Scout) + signer-based write actions (Archon): likes, follows, unfollows.
 
 ---
+
 ## What it does
 
 Registers five actions:
