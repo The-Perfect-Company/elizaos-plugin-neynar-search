@@ -1,6 +1,6 @@
 # @elizaos/plugin-neynar-search
 
-**Farcaster engagement discovery, engagement (likes), and relationship management (follow/unfollow) for ElizaOS agents via the Neynar REST API.**
+**Farcaster engagement discovery, engagement (likes), and relationship management (follow/unfollow) for ElizaOS agents via the Neynar REST API.** 
 
 Read-only discovery (Scout) + signer-based write actions (Archon): likes, follows, unfollows.
 
