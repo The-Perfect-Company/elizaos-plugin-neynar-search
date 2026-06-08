@@ -7,6 +7,7 @@ Read-only discovery (Scout) + signer-based write actions (Archon): likes, follow
 ---
 
 This project is currently being updated.
+New version.
 
 ---
 
